@@ -985,6 +985,17 @@ def response(resp: "SXNG_Response") -> EngineResults:
             continue
         add_fn(res, result)
 
+    # Brave returns infobox/faq sidebar cards in the same payload as web
+    # results; surface them on the web instance so callers get the full
+    # knowledge panel without needing a separate engine instance + API call.
+    if search_type == "web":
+        for sidebar_key, sidebar_fn in (("infobox", _add_infobox), ("faq", _add_faq)):
+            sidebar = data.get(sidebar_key) or {}
+            for entry in sidebar.get("results", []) or []:
+                if family_friendly_only and entry.get("family_friendly") is False:
+                    continue
+                sidebar_fn(res, entry)
+
     return res
 
 
