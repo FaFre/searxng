@@ -125,11 +125,13 @@ this value. Useful for crawled-corpus cut-offs."""
 exclude_terms: str = ""
 """Words to discard from results (Mojeek ``qm``); space-separated."""
 
-include_domains: list[str] | None = None
-"""Restrict results to these domains (Mojeek ``fi``); max 25."""
+include_domains: list[str] = []
+"""Restrict results to these domains (Mojeek ``fi``); max 25.
+Replaced wholesale by SearXNG's YAML loader; never mutated in-place."""
 
-exclude_domains: list[str] | None = None
-"""Drop results from these domains (Mojeek ``fe``); max 25."""
+exclude_domains: list[str] = []
+"""Drop results from these domains (Mojeek ``fe``); max 25.
+Replaced wholesale by SearXNG's YAML loader; never mutated in-place."""
 
 site: str = ""
 """Restrict the search to a single domain (Mojeek ``site``)."""

@@ -38,8 +38,8 @@ class TestMojeekApiEngine(SearxTestCase):
         mojeekapi.rank_by_date = False
         mojeekapi.date_before = ""
         mojeekapi.exclude_terms = ""
-        mojeekapi.include_domains = None
-        mojeekapi.exclude_domains = None
+        mojeekapi.include_domains = []
+        mojeekapi.exclude_domains = []
         mojeekapi.site = ""
         mojeekapi.cluster_format = 0
         mojeekapi.cluster_results = 0
