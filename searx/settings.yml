@@ -2378,6 +2378,13 @@ engines:
     categories: [general, web]
     disabled: true
 
+  - name: mojeekapi
+    engine: mojeekapi
+    shortcut: mjkapi
+    # read https://www.mojeek.com/support/api/search/
+    api_key: ""
+    inactive: true
+
   - name: mojeek images
     shortcut: mjkimg
     engine: mojeek
