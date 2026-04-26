@@ -242,11 +242,16 @@ def _published_date(result: dict[str, t.Any]):
 
 
 def _content(result: dict[str, t.Any]) -> str:
-    parts = [result.get("description") or ""]
-    for snippet in result.get("extra_snippets") or []:
-        if snippet:
-            parts.append(snippet)
-    return " — ".join(p for p in parts if p)
+    return result.get("description") or ""
+
+
+def _extra_snippets_text(result: dict[str, t.Any]) -> str:
+    """Join non-empty ``extra_snippets`` for use in ``metadata``."""
+    return " — ".join(s for s in (result.get("extra_snippets") or []) if s)
+
+
+def _join_metadata(*parts: str) -> str:
+    return " | ".join(p for p in parts if p)
 
 
 def _thumbnail(result: dict[str, t.Any]) -> str | None:
@@ -301,7 +306,7 @@ def _add_web(res: EngineResults, result: dict[str, t.Any]) -> None:
             publishedDate=_published_date(result),
             thumbnail=_thumbnail(result) or "",
             author=_author(result),
-            metadata=result.get("language") or "",
+            metadata=_join_metadata(result.get("language") or "", _extra_snippets_text(result)),
         ),
     )
 
@@ -315,6 +320,7 @@ def _add_news(res: EngineResults, result: dict[str, t.Any]) -> None:
             publishedDate=_published_date(result),
             thumbnail=_thumbnail(result) or "",
             author=_author(result),
+            metadata=_extra_snippets_text(result),
         ),
     )
 
@@ -334,6 +340,7 @@ def _add_video(res: EngineResults, result: dict[str, t.Any]) -> None:
             author=video.get("creator") or _author(result),
             views=str(video.get("views") or ""),
             length=_parse_duration(video.get("duration")),
+            metadata=_extra_snippets_text(result),
         ),
     )
 
@@ -347,6 +354,9 @@ def _add_discussion(res: EngineResults, result: dict[str, t.Any]) -> None:
         extras.append(str(forum))
     if answers is not None:
         extras.append(f"{answers} answers")
+    snippets = _extra_snippets_text(result)
+    if snippets:
+        extras.append(snippets)
     metadata = " · ".join(extras)
 
     body_parts: list[str] = []

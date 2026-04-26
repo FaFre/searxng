@@ -152,10 +152,11 @@ class TestBraveApiEngine(SearxTestCase):
         r = results[0]
         self.assertEqual(r["url"], "https://example.com/a")
         self.assertEqual(r["title"], "A title")
-        self.assertIn("snippet one", r["content"])
-        self.assertIn("snippet two", r["content"])
+        self.assertEqual(r["content"], "A description")
+        self.assertIn("snippet one", r["metadata"])
+        self.assertIn("snippet two", r["metadata"])
+        self.assertIn("en", r["metadata"])
         self.assertEqual(r["author"], "Example, Inc.")
-        self.assertEqual(r["metadata"], "en")
         self.assertEqual(r["thumbnail"], "https://t/s.jpg")
         self.assertEqual(r["publishedDate"], datetime.datetime(2026, 4, 20, 12, 34, 56))
 
