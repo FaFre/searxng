@@ -260,8 +260,9 @@ def _extra_snippets_text(result: dict[str, t.Any]) -> str:
     return " — ".join(s for s in (result.get("extra_snippets") or []) if s)
 
 
-def _join_metadata(*parts: str) -> str:
-    return " | ".join(p for p in parts if p)
+def _format_metadata(items: list[tuple[str, str]]) -> str:
+    """Format structured metadata items into a ``key: value`` string."""
+    return " | ".join(f"{k}: {v}" for k, v in items)
 
 
 def _thumbnail(result: dict[str, t.Any]) -> str | None:
@@ -337,114 +338,115 @@ def _names(items: t.Any) -> list[str]:
     return out
 
 
-def _rich_type_metadata(result: dict[str, t.Any]) -> list[str]:
-    """Pull schema.org-style fields out of a web result into metadata badges.
+def _rich_type_items(result: dict[str, t.Any]) -> list[tuple[str, str]]:
+    """Pull schema.org-style fields out of a web result into structured metadata items.
 
     Brave attaches optional ``article`` / ``book`` / ``movie`` / ``software``
     / ``recipe`` / ``product`` / ``rating`` / ``organization`` / ``qa``
-    blocks per result; we surface a compact summary line for each.
+    blocks per result; we surface each as a ``(key, value)`` pair for
+    machine-readable metadata formatting.
     """
-    parts: list[str] = []
+    items: list[tuple[str, str]] = []
 
     article = result.get("article") or {}
     if article:
         authors = _names(article.get("author"))
         if authors:
-            parts.append(", ".join(authors))
+            items.append(("author", ", ".join(authors)))
         publisher = (article.get("publisher") or {}).get("name")
         if publisher:
-            parts.append(str(publisher))
+            items.append(("publisher", str(publisher)))
         if article.get("date"):
-            parts.append(str(article["date"]))
+            items.append(("date", str(article["date"])))
 
     book = result.get("book") or {}
     if book:
         authors = _names(book.get("author"))
         if authors:
-            parts.append(f"by {', '.join(authors)}")
+            items.append(("author", ", ".join(authors)))
         if book.get("pages"):
-            parts.append(f"{book['pages']} pages")
+            items.append(("pages", f"{book['pages']} pages"))
         price = book.get("price") or {}
         if isinstance(price, dict) and price.get("price"):
-            parts.append(f"{price['price']} {price.get('priceCurrency') or ''}".strip())
+            items.append(("price", f"{price['price']} {price.get('priceCurrency') or ''}".strip()))
         rating_text = _rating_text(book.get("rating"))
         if rating_text:
-            parts.append(rating_text)
+            items.append(("rating", rating_text))
 
     movie = result.get("movie") or {}
     if movie:
         if movie.get("release"):
-            parts.append(str(movie["release"]))
+            items.append(("released", str(movie["release"])))
         if movie.get("duration"):
-            parts.append(str(movie["duration"]))
+            items.append(("duration", str(movie["duration"])))
         genre = movie.get("genre") or []
         if genre:
-            parts.append(", ".join(str(g) for g in genre if g))
+            items.append(("genre", ", ".join(str(g) for g in genre if g)))
         rating_text = _rating_text(movie.get("rating"))
         if rating_text:
-            parts.append(rating_text)
+            items.append(("rating", rating_text))
 
     software = result.get("software") or {}
     if software:
         if software.get("programmingLanguage"):
-            parts.append(str(software["programmingLanguage"]))
+            items.append(("language", str(software["programmingLanguage"])))
         if software.get("version"):
-            parts.append(f"v{software['version']}")
+            items.append(("version", f"v{software['version']}"))
         if software.get("stars") is not None:
-            parts.append(f"★ {software['stars']}")
+            items.append(("stars", f"★ {software['stars']}"))
         if software.get("forks") is not None:
-            parts.append(f"⑂ {software['forks']}")
+            items.append(("forks", f"⑂ {software['forks']}"))
 
     recipe = result.get("recipe") or {}
     if recipe:
         if recipe.get("time"):
-            parts.append(str(recipe["time"]))
+            items.append(("time", str(recipe["time"])))
         if recipe.get("servings"):
-            parts.append(f"{recipe['servings']} servings")
+            items.append(("servings", f"{recipe['servings']} servings"))
         if recipe.get("calories"):
-            parts.append(f"{recipe['calories']} cal")
+            items.append(("calories", f"{recipe['calories']} cal"))
         rating_text = _rating_text(recipe.get("rating"))
         if rating_text:
-            parts.append(rating_text)
+            items.append(("rating", rating_text))
 
     product = result.get("product") or {}
     if product:
         if product.get("price"):
-            parts.append(str(product["price"]))
+            items.append(("price", str(product["price"])))
         if product.get("category"):
-            parts.append(str(product["category"]))
+            items.append(("category", str(product["category"])))
         rating_text = _rating_text(product.get("rating"))
         if rating_text:
-            parts.append(rating_text)
+            items.append(("rating", rating_text))
 
     # Top-level rating, when no rich type already covered it.
-    if not any(parts):
+    if not items:
         top_rating = _rating_text(result.get("rating"))
         if top_rating:
-            parts.append(top_rating)
+            items.append(("rating", top_rating))
 
     organization = result.get("organization") or {}
     if organization.get("name"):
-        parts.append(str(organization["name"]))
+        items.append(("organization", str(organization["name"])))
 
     qa = result.get("qa") or {}
     question = qa.get("question") if isinstance(qa, dict) else None
     if question:
-        parts.append(f"Q: {question}")
+        items.append(("question", str(question)))
 
-    return parts
+    return items
 
 
-def _flag_metadata(result: dict[str, t.Any]) -> list[str]:
-    """Boolean-style flags worth surfacing to the UI."""
-    out: list[str] = []
+def _flag_items(result: dict[str, t.Any]) -> list[tuple[str, str]]:
+    """Boolean-style flags surfaced as ``type`` metadata items."""
+    items: list[tuple[str, str]] = []
     if result.get("is_source_local"):
-        out.append("Local")
+        items.append(("type", "Local"))
     if result.get("is_source_both"):
-        out.append("Local & Web")
+        items.append(("type", "Local & Web"))
     if result.get("is_live"):
-        out.append("Live")
-    return out
+        items.append(("type", "Live"))
+    return items
 
 
 _DAY_ABBRS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -506,20 +508,20 @@ def _zoom_to_delta(zoom_level: t.Any) -> float:
 
 
 def _add_web(res: EngineResults, result: dict[str, t.Any]) -> None:
-    metadata_parts: list[str] = []
-    metadata_parts.extend(_flag_metadata(result))
+    metadata_items: list[tuple[str, str]] = []
+    metadata_items.extend(_flag_items(result))
     subtype = result.get("subtype")
     if subtype and subtype not in ("generic", "search_result"):
-        metadata_parts.append(str(subtype).replace("_", " ").title())
+        metadata_items.append(("subtype", str(subtype).replace("_", " ").title()))
     content_type = result.get("content_type")
     if content_type:
-        metadata_parts.append(str(content_type).replace("_", " ").title())
-    metadata_parts.extend(_rich_type_metadata(result))
+        metadata_items.append(("content_type", str(content_type).replace("_", " ").title()))
+    metadata_items.extend(_rich_type_items(result))
     if result.get("language"):
-        metadata_parts.append(str(result["language"]))
+        metadata_items.append(("language", str(result["language"])))
     snippets = _extra_snippets_text(result)
     if snippets:
-        metadata_parts.append(snippets)
+        metadata_items.append(("snippets", snippets))
 
     # Prefer ``article.author`` for canonical author attribution.
     article_authors = _names((result.get("article") or {}).get("author"))
@@ -533,21 +535,21 @@ def _add_web(res: EngineResults, result: dict[str, t.Any]) -> None:
             publishedDate=_published_date(result),
             thumbnail=_thumbnail(result) or "",
             author=author,
-            metadata=" | ".join(p for p in metadata_parts if p),
+            metadata=_format_metadata(metadata_items),
         ),
     )
 
 
 def _add_news(res: EngineResults, result: dict[str, t.Any]) -> None:
-    metadata_parts: list[str] = []
+    metadata_items: list[tuple[str, str]] = []
     if result.get("breaking"):
-        metadata_parts.append("Breaking")
-    metadata_parts.extend(_flag_metadata(result))
+        metadata_items.append(("type", "Breaking"))
+    metadata_items.extend(_flag_items(result))
     if result.get("language"):
-        metadata_parts.append(str(result["language"]))
+        metadata_items.append(("language", str(result["language"])))
     snippets = _extra_snippets_text(result)
     if snippets:
-        metadata_parts.append(snippets)
+        metadata_items.append(("snippets", snippets))
     # ``source`` is the publisher's plain name (e.g. "Reuters") — preferred
     # over ``profile.name``/``profile.long_name`` when present.
     author = result.get("source") or _author(result)
@@ -559,27 +561,27 @@ def _add_news(res: EngineResults, result: dict[str, t.Any]) -> None:
             publishedDate=_published_date(result),
             thumbnail=_thumbnail(result) or "",
             author=author,
-            metadata=" | ".join(metadata_parts),
+            metadata=_format_metadata(metadata_items),
         ),
     )
 
 
 def _add_video(res: EngineResults, result: dict[str, t.Any]) -> None:
     video = result.get("video") or {}
-    metadata_parts: list[str] = []
-    metadata_parts.extend(_flag_metadata(result))
+    metadata_items: list[tuple[str, str]] = []
+    metadata_items.extend(_flag_items(result))
     if video.get("publisher"):
-        metadata_parts.append(str(video["publisher"]))
+        metadata_items.append(("publisher", str(video["publisher"])))
     tags = video.get("tags") or []
     if tags:
-        metadata_parts.append(", ".join(str(t) for t in tags if t))
+        metadata_items.append(("tags", ", ".join(str(t) for t in tags if t)))
     if video.get("requires_subscription"):
-        metadata_parts.append("Subscription")
+        metadata_items.append(("access", "Subscription"))
     if result.get("language"):
-        metadata_parts.append(str(result["language"]))
+        metadata_items.append(("language", str(result["language"])))
     snippets = _extra_snippets_text(result)
     if snippets:
-        metadata_parts.append(snippets)
+        metadata_items.append(("snippets", snippets))
     video_author = video.get("author") or {}
     res.add(
         res.types.MainResult(
@@ -599,29 +601,28 @@ def _add_video(res: EngineResults, result: dict[str, t.Any]) -> None:
             ),
             views=str(video.get("views") or ""),
             length=_parse_duration(video.get("duration")),
-            metadata=" | ".join(metadata_parts),
+            metadata=_format_metadata(metadata_items),
         ),
     )
 
 
 def _add_discussion(res: EngineResults, result: dict[str, t.Any]) -> None:
     data = result.get("data") or {}
-    extras: list[str] = []
+    metadata_items: list[tuple[str, str]] = []
     forum = data.get("forum_name")
-    answers = data.get("num_answers")
-    score = data.get("score")
     if forum:
-        extras.append(str(forum))
+        metadata_items.append(("forum", str(forum)))
+    score = data.get("score")
     if score:
-        extras.append(f"↑ {score}")
+        metadata_items.append(("score", f"↑ {score}"))
+    answers = data.get("num_answers")
     if answers is not None:
-        extras.append(f"{answers} answers")
+        metadata_items.append(("answers", f"{answers} answers"))
     if result.get("language"):
-        extras.append(str(result["language"]))
+        metadata_items.append(("language", str(result["language"])))
     snippets = _extra_snippets_text(result)
     if snippets:
-        extras.append(snippets)
-    metadata = " · ".join(extras)
+        metadata_items.append(("snippets", snippets))
 
     body_parts: list[str] = []
     if data.get("question"):
@@ -640,7 +641,7 @@ def _add_discussion(res: EngineResults, result: dict[str, t.Any]) -> None:
             content=content,
             publishedDate=_published_date(result),
             thumbnail=_thumbnail(result) or "",
-            metadata=metadata,
+            metadata=_format_metadata(metadata_items),
         ),
     )
 
@@ -873,30 +874,30 @@ def _add_location(res: EngineResults, result: dict[str, t.Any]) -> None:
         except (TypeError, ValueError):
             pass
 
-    metadata_parts: list[str] = []
+    metadata_items: list[tuple[str, str]] = []
     rating_text = _rating_text(result.get("rating"))
     if rating_text:
-        metadata_parts.append(rating_text)
+        metadata_items.append(("rating", rating_text))
     if result.get("price_range"):
-        metadata_parts.append(str(result["price_range"]))
+        metadata_items.append(("price_range", str(result["price_range"])))
     distance = result.get("distance") or {}
     if isinstance(distance, dict) and distance.get("value") is not None:
         unit = distance.get("units") or ""
-        metadata_parts.append(f"{distance['value']} {unit}".strip())
+        metadata_items.append(("distance", f"{distance['value']} {unit}".strip()))
     cats = result.get("categories") or []
     if cats:
-        metadata_parts.append(", ".join(str(c) for c in cats if c))
+        metadata_items.append(("categories", ", ".join(str(c) for c in cats if c)))
     cuisine = result.get("serves_cuisine") or []
     if cuisine:
-        metadata_parts.append(", ".join(str(c) for c in cuisine if c))
+        metadata_items.append(("cuisine", ", ".join(str(c) for c in cuisine if c)))
     hours = _todays_hours(result.get("opening_hours"))
     if hours:
-        metadata_parts.append(hours)
+        metadata_items.append(("hours", hours))
     if result.get("timezone"):
-        metadata_parts.append(str(result["timezone"]))
+        metadata_items.append(("timezone", str(result["timezone"])))
     review_excerpt = _first_review_text(result.get("reviews"))
     if review_excerpt:
-        metadata_parts.append(review_excerpt)
+        metadata_items.append(("review", review_excerpt))
 
     payload: dict[str, t.Any] = {
         "template": "map.html",
@@ -911,7 +912,7 @@ def _add_location(res: EngineResults, result: dict[str, t.Any]) -> None:
         "latitude": latitude,
         "boundingbox": boundingbox,
         "geojson": geojson,
-        "metadata": " | ".join(p for p in metadata_parts if p),
+        "metadata": _format_metadata(metadata_items),
     }
     if not payload["url"]:
         # The map template requires a clickable URL; fall back to a search link.
