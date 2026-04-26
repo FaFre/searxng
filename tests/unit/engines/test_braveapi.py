@@ -76,8 +76,8 @@ class TestBraveApiEngine(SearxTestCase):
         braveapi.request("q", params)
         self.assertIn("search_lang=de", params["url"])
         self.assertIn("country=DE", params["url"])
-        # ui_lang must be lowercase per Brave docs
-        self.assertIn("ui_lang=de-de", params["url"])
+        # ui_lang uses BCP-47 casing (lower-language, upper-region)
+        self.assertIn("ui_lang=de-DE", params["url"])
 
     def test_request_locale_skips_script_subtag(self):
         params = _params(searxng_locale="zh-Hans-CN")
@@ -261,7 +261,7 @@ class TestBraveApiEngine(SearxTestCase):
         args = braveapi._build_locale("fr-FR")
         self.assertEqual(args["search_lang"], "fr")
         self.assertEqual(args["country"], "FR")
-        self.assertEqual(args["ui_lang"], "fr-fr")
+        self.assertEqual(args["ui_lang"], "fr-FR")
 
     def test_response_empty_payload(self):
         results = list(braveapi.response(self._resp({})))
