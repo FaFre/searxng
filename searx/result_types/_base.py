@@ -444,9 +444,10 @@ class MainResult(Result):  # pylint: disable=missing-class-docstring
             raise ValueError(f"missing a value in field 'parsed_url': {self}")
 
         url = self.parsed_url
+        netloc = url.netloc.removeprefix("www.")
         return hash(
             f"{self.template}"
-            + f"|{url.netloc}|{url.path}|{url.params}|{url.query}|{url.fragment}"
+            + f"|{netloc}|{url.path}|{url.params}|{url.query}"
             + f"|{self.img_src}"
         )
 
@@ -573,9 +574,10 @@ class LegacyResult(dict[str, t.Any]):
                 raise ValueError(f"missing a value in field 'parsed_url': {self}")
 
             url = self.parsed_url
+            netloc = url.netloc.removeprefix("www.")
             return hash(
                 f"{self.template}"
-                + f"|{url.netloc}|{url.path}|{url.params}|{url.query}|{url.fragment}"
+                + f"|{netloc}|{url.path}|{url.params}|{url.query}"
                 + f"|{self.img_src}"
             )
 
