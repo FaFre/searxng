@@ -260,6 +260,11 @@ def _extract_published_date(published_date_raw: str | int | None):
         return None
 
 
+def _format_metadata(items: list[tuple[str, str]]) -> str:
+    """Format structured metadata items into a ``key: value`` string."""
+    return " | ".join(f"{k}: {v}" for k, v in items)
+
+
 def response(resp: "SXNG_Response") -> EngineResults:
     """Process the API response and return results."""
     res = EngineResults()
@@ -289,24 +294,23 @@ def response(resp: "SXNG_Response") -> EngineResults:
         if isinstance(image, dict):
             thumbnail = image.get("url")
 
-        metadata_parts: list[str] = []
+        metadata_items: list[tuple[str, str]] = []
         score = result.get("score")
         if isinstance(score, (int, float)):
-            metadata_parts.append(f"score: {score:.2f}")
+            metadata_items.append(("score", f"{score:.2f}"))
         # ``g`` (gravity) and ``nph`` (matched phrase count) are returned only
         # with ``fscr=1`` (Custom Plan); surfaced when present.
         gravity = result.get("g")
         if isinstance(gravity, (int, float)):
-            metadata_parts.append(f"gravity: {int(gravity)}")
+            metadata_items.append(("gravity", str(int(gravity))))
         nph = result.get("nph")
         if isinstance(nph, int) and nph > 0:
-            metadata_parts.append(f"{nph} phrase{'s' if nph != 1 else ''} matched")
+            metadata_items.append(("phrases", f"{nph} matched"))
         size_str = result.get("size")
         if size_str:
-            metadata_parts.append(str(size_str))
+            metadata_items.append(("size", str(size_str)))
         if result.get("mres"):
-            metadata_parts.append("more from domain")
-        metadata = " · ".join(metadata_parts)
+            metadata_items.append(("more_from_domain", "yes"))
 
         res.add(
             res.types.MainResult(
@@ -317,7 +321,7 @@ def response(resp: "SXNG_Response") -> EngineResults:
                     result.get("pdate") or result.get("timestamp") or result.get("cdatetimestamp")
                 ),
                 thumbnail=thumbnail,
-                metadata=metadata,
+                metadata=_format_metadata(metadata_items),
             ),
         )
 
