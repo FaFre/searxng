@@ -35,13 +35,15 @@ class TestMojeekApiEngine(SearxTestCase):
         mojeekapi.quality_filter = False
         mojeekapi.title_length = 0
         mojeekapi.snippet_length = 0
-        mojeekapi.date_weight = 0
+        mojeekapi.rank_by_date = False
+        mojeekapi.date_before = ""
         mojeekapi.exclude_terms = ""
         mojeekapi.include_domains = None
         mojeekapi.exclude_domains = None
         mojeekapi.site = ""
         mojeekapi.cluster_format = 0
         mojeekapi.cluster_results = 0
+        mojeekapi.confidence_min = 0
 
     # ---- request() ----
 
@@ -129,7 +131,8 @@ class TestMojeekApiEngine(SearxTestCase):
         mojeekapi.exclude_domains = ["x.com", "y.com"]
         mojeekapi.title_length = 80
         mojeekapi.snippet_length = 240
-        mojeekapi.date_weight = 50
+        mojeekapi.rank_by_date = True
+        mojeekapi.date_before = "20260101"
         mojeekapi.cluster_format = 2
         mojeekapi.cluster_results = 3
 
@@ -142,7 +145,8 @@ class TestMojeekApiEngine(SearxTestCase):
         self.assertIn("fe=x.com%2Cy.com", url)
         self.assertIn("tlen=80", url)
         self.assertIn("dlen=240", url)
-        self.assertIn("datewr=50", url)
+        self.assertIn("datewr=100", url)
+        self.assertIn("before=20260101", url)
         self.assertIn("clufmt=2", url)
         self.assertIn("si=3", url)
 
@@ -249,6 +253,48 @@ class TestMojeekApiEngine(SearxTestCase):
         }
         results = list(mojeekapi.response(self._resp(payload)))
         self.assertIsInstance(results[0]["publishedDate"], datetime.datetime)
+
+    def test_response_metadata_includes_gravity_and_phrases(self):
+        payload = {
+            "response": {
+                "status": "OK",
+                "results": [
+                    {"url": "https://e.com", "title": "t", "desc": "", "g": 47, "nph": 2},
+                ],
+            }
+        }
+        results = list(mojeekapi.response(self._resp(payload)))
+        self.assertIn("gravity: 47", results[0]["metadata"])
+        self.assertIn("2 phrases matched", results[0]["metadata"])
+
+    def test_response_metadata_includes_mres(self):
+        payload = {
+            "response": {
+                "status": "OK",
+                "results": [
+                    {"url": "https://e.com", "title": "t", "desc": "", "mres": 1, "size": "2kb"},
+                ],
+            }
+        }
+        results = list(mojeekapi.response(self._resp(payload)))
+        self.assertIn("more from domain", results[0]["metadata"])
+        self.assertIn("2kb", results[0]["metadata"])
+
+    def test_response_quality_filter_drops_low_cfs(self):
+        mojeekapi.quality_filter = True
+        mojeekapi.confidence_min = 3
+        payload = {
+            "response": {
+                "status": "OK",
+                "results": [
+                    {"url": "https://lo", "title": "", "desc": "", "cfs": 1},
+                    {"url": "https://hi", "title": "", "desc": "", "cfs": 5},
+                ],
+            }
+        }
+        results = list(mojeekapi.response(self._resp(payload)))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["url"], "https://hi")
 
     def test_response_empty_payload(self):
         results = list(mojeekapi.response(self._resp({})))

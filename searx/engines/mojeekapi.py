@@ -19,13 +19,15 @@ Optional settings are:
 - :py:obj:`quality_filter`
 - :py:obj:`title_length`
 - :py:obj:`snippet_length`
-- :py:obj:`date_weight`
+- :py:obj:`rank_by_date`
+- :py:obj:`date_before`
 - :py:obj:`exclude_terms`
 - :py:obj:`include_domains`
 - :py:obj:`exclude_domains`
 - :py:obj:`site`
 - :py:obj:`cluster_format`
 - :py:obj:`cluster_results`
+- :py:obj:`confidence_min`
 
 .. code:: yaml
 
@@ -40,7 +42,8 @@ Optional settings are:
                              # recommended onscr/sescr thresholds
     title_length: 80         # optional, 0..127
     snippet_length: 240      # optional, 0..511
-    date_weight: 0           # optional, 0..100; bias ranking toward recency
+    rank_by_date: false      # optional; if true, sort by date (datewr=100)
+    date_before: ""          # optional; upper date bound (YYYYMMDD or day|month|year)
     exclude_terms: ""        # optional; words to discard (Mojeek ``qm``)
     include_domains: []      # optional; max 25 domains (``fi``)
     exclude_domains: []      # optional; max 25 domains (``fe``)
@@ -109,8 +112,15 @@ title_length: int = 0
 snippet_length: int = 0
 """Optional snippet length (Mojeek ``dlen``, 0..511). 0 keeps the API default."""
 
-date_weight: int = 0
-"""Date-weight ratio (Mojeek ``datewr``, 0..100). 0 disables recency bias."""
+rank_by_date: bool = False
+"""If True, rank results by date instead of relevance (Mojeek ``datewr=100``).
+Mojeek's docs document ``datewr`` with values ``[0|100]`` only — it is a
+binary toggle, not a continuous ratio."""
+
+date_before: str = ""
+"""Upper date bound (Mojeek ``before``); accepts ``day``/``month``/``year``
+or ``YYYYMMDD``. Results are restricted to dates *up to but not including*
+this value. Useful for crawled-corpus cut-offs."""
 
 exclude_terms: str = ""
 """Words to discard from results (Mojeek ``qm``); space-separated."""
@@ -129,6 +139,11 @@ cluster_format: int = 0
 
 cluster_results: int = 0
 """Max results per host (Mojeek ``si``). 0 keeps the API default."""
+
+confidence_min: int = 0
+"""When :py:obj:`quality_filter` is enabled, drop results whose experimental
+``cfs`` confidence score (0..5) is below this threshold. 0 disables the
+extra check; values >0 are stricter (Mojeek's default ``cfs`` is 5)."""
 
 _DOMAIN_LIST_MAX = 25
 
@@ -186,8 +201,10 @@ def request(query: str, params: "OnlineParams") -> None:
         search_args["tlen"] = title_length
     if snippet_length:
         search_args["dlen"] = snippet_length
-    if date_weight:
-        search_args["datewr"] = date_weight
+    if rank_by_date:
+        search_args["datewr"] = 100
+    if date_before:
+        search_args["before"] = date_before
     if cluster_format:
         search_args["clufmt"] = cluster_format
     if cluster_results:
@@ -260,6 +277,10 @@ def response(resp: "SXNG_Response") -> EngineResults:
             if isinstance(onscr, (int, float)) and onscr < _ONSCR_MIN:
                 if sescr is None or (isinstance(sescr, (int, float)) and sescr < _SESCR_MIN):
                     continue
+            # Experimental confidence score; only enforce when configured.
+            cfs = result.get("cfs")
+            if confidence_min and isinstance(cfs, (int, float)) and cfs < confidence_min:
+                continue
 
         thumbnail = None
         image = result.get("image")
@@ -270,9 +291,19 @@ def response(resp: "SXNG_Response") -> EngineResults:
         score = result.get("score")
         if isinstance(score, (int, float)):
             metadata_parts.append(f"score: {score:.2f}")
+        # ``g`` (gravity) and ``nph`` (matched phrase count) are returned only
+        # with ``fscr=1`` (Custom Plan); surfaced when present.
+        gravity = result.get("g")
+        if isinstance(gravity, (int, float)):
+            metadata_parts.append(f"gravity: {int(gravity)}")
+        nph = result.get("nph")
+        if isinstance(nph, int) and nph > 0:
+            metadata_parts.append(f"{nph} phrase{'s' if nph != 1 else ''} matched")
         size_str = result.get("size")
         if size_str:
             metadata_parts.append(str(size_str))
+        if result.get("mres"):
+            metadata_parts.append("more from domain")
         metadata = " · ".join(metadata_parts)
 
         res.add(
