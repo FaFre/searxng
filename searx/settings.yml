@@ -2584,7 +2584,27 @@ engines:
 
   - name: braveapi
     engine: braveapi
+    shortcut: brapi
+    network: braveapi
     # read https://docs.searxng.org/dev/engines/online/brave.html
+    api_key: ""
+    inactive: true
+
+  - name: braveapi.news
+    engine: braveapi
+    shortcut: branews
+    network: braveapi
+    categories: [news]
+    search_type: news
+    api_key: ""
+    inactive: true
+
+  - name: braveapi.videos
+    engine: braveapi
+    shortcut: bravido
+    network: braveapi
+    categories: [videos, web]
+    search_type: videos
     api_key: ""
     inactive: true
 
