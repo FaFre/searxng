@@ -1339,6 +1339,13 @@ engines:
     disabled: true
     inactive: true
 
+  - name: marginaliaapi
+    engine: marginaliaapi
+    shortcut: marapi
+    # read https://about.marginalia-search.com/article/api/
+    api_key: ""
+    inactive: true
+
   - name: mastodon users
     engine: mastodon
     mastodon_type: accounts
