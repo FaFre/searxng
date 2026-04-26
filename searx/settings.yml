@@ -2592,7 +2592,6 @@ engines:
   - name: braveapi
     engine: braveapi
     shortcut: brapi
-    network: braveapi
     # read https://docs.searxng.org/dev/engines/online/brave.html
     api_key: ""
     inactive: true

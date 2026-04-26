@@ -132,7 +132,7 @@ def _build_locale(searxng_locale: str) -> dict[str, str]:
     Prefers values from the engine's :py:obj:`EngineTraits` (populated by
     :py:func:`fetch_traits`); falls back to a structural parse of the tag
     when traits are unavailable. Brave expects ``country`` as upper-case
-    ISO 3166-1 alpha-2 and ``ui_lang`` as ``en-us``-style lowercase.
+    ISO 3166-1 alpha-2 and ``ui_lang`` in BCP-47 form (``en-US``).
     """
     args: dict[str, str] = {}
     if not searxng_locale or searxng_locale == "all":
@@ -168,7 +168,9 @@ def _build_locale(searxng_locale: str) -> dict[str, str]:
     if region:
         args["country"] = region
         if not ui_lang:
-            ui_lang = f"{lang}-{region.lower()}"
+            # Brave's API expects ``ui_lang`` like ``en-US`` (lower-language,
+            # upper-region), matching IETF BCP 47 casing.
+            ui_lang = f"{lang}-{region}"
 
     if ui_lang:
         args["ui_lang"] = ui_lang
@@ -214,6 +216,10 @@ def request(query: str, params: "OnlineParams") -> None:
     params["headers"]["X-Subscription-Token"] = api_key
     params["headers"]["Accept"] = "application/json"
     params["headers"]["Accept-Encoding"] = "gzip"
+    # Read the response body ourselves so we can surface Brave's structured
+    # error message (e.g. plan-tier rejections return HTTP 422 with details
+    # in the JSON body).
+    params["raise_for_httperror"] = False
 
 
 def _parse_iso_date(value: str | None):
@@ -444,7 +450,19 @@ def response(resp: "SXNG_Response") -> EngineResults:
     res = EngineResults()
 
     if resp.status_code != 200:
-        raise SearxEngineAPIException(f"Brave API returned HTTP {resp.status_code}")
+        detail = ""
+        try:
+            body = resp.json()
+            errors = (body.get("meta") or {}).get("errors") or body.get("errors")
+            if errors:
+                detail = f": {errors}"
+            elif body.get("message"):
+                detail = f": {body['message']}"
+        except (ValueError, AttributeError, TypeError):
+            text = (resp.text or "").strip()
+            if text:
+                detail = f": {text[:200]}"
+        raise SearxEngineAPIException(f"Brave API returned HTTP {resp.status_code}{detail}")
 
     data = resp.json()
 
