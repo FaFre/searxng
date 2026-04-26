@@ -30,7 +30,7 @@ class TestMarginaliaApiEngine(SearxTestCase):
         marginaliaapi.domain_count = 2
         marginaliaapi.query_timeout = 150
         marginaliaapi.custom_filter = ""
-        marginaliaapi.language = "en"
+        marginaliaapi.default_lang = "en"
 
     # ---- request() ----
 
@@ -70,7 +70,7 @@ class TestMarginaliaApiEngine(SearxTestCase):
         self.assertIn("lang=zh", params["url"])
 
     def test_request_locale_all_falls_back_to_default(self):
-        marginaliaapi.language = "fr"
+        marginaliaapi.default_lang = "fr"
         params = _params(searxng_locale="all")
         marginaliaapi.request("q", params)
         self.assertIn("lang=fr", params["url"])
