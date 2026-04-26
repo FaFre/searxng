@@ -38,6 +38,7 @@ The API supports paging (max 10 pages) and time filters.
 """
 
 import datetime
+import logging
 import typing as t
 
 from urllib.parse import urlencode
@@ -47,6 +48,8 @@ from searx.enginelib.traits import EngineTraits
 from searx.exceptions import SearxEngineAPIException
 from searx.result_types import EngineResults
 from searx.utils import get_embeded_stream_url
+
+logger = logging.getLogger("searx.engines.braveapi")
 
 if t.TYPE_CHECKING:
     from searx.extended_types import SXNG_Response
@@ -97,6 +100,9 @@ rules — passed verbatim to the ``goggles`` query parameter."""
 
 include_sponsored: bool = False
 """When false, drop results flagged ``sponsored=true`` by the API."""
+
+family_friendly_only: bool = False
+"""When true, drop results where the API set ``family_friendly=false``."""
 
 base_url = "https://api.search.brave.com/res/v1/web/search"
 """Base URL for the Brave Search API."""
@@ -301,7 +307,224 @@ def _author(result: dict[str, t.Any]) -> str:
     return profile.get("long_name") or profile.get("name") or ""
 
 
+def _rating_text(rating: dict[str, t.Any] | None, prefix: str = "★ ") -> str:
+    """Render a rating object (``ratingValue``/``bestRating``/``reviewCount``)."""
+    if not isinstance(rating, dict):
+        return ""
+    value = rating.get("ratingValue") or rating.get("value")
+    if value is None:
+        return ""
+    best = rating.get("bestRating") or rating.get("best")
+    count = rating.get("reviewCount") or rating.get("count")
+    text = f"{prefix}{value}/{best}" if best else f"{prefix}{value}"
+    if count:
+        text += f" ({count})"
+    return text
+
+
+def _names(items: t.Any) -> list[str]:
+    """Extract ``name`` from a list of ``{name, ...}`` objects or pass strings through."""
+    if not isinstance(items, (list, tuple)):
+        return []
+    out: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            n = item.get("name") or item.get("long_name")
+            if n:
+                out.append(str(n))
+        elif item:
+            out.append(str(item))
+    return out
+
+
+def _rich_type_metadata(result: dict[str, t.Any]) -> list[str]:
+    """Pull schema.org-style fields out of a web result into metadata badges.
+
+    Brave attaches optional ``article`` / ``book`` / ``movie`` / ``software``
+    / ``recipe`` / ``product`` / ``rating`` / ``organization`` / ``qa``
+    blocks per result; we surface a compact summary line for each.
+    """
+    parts: list[str] = []
+
+    article = result.get("article") or {}
+    if article:
+        authors = _names(article.get("author"))
+        if authors:
+            parts.append(", ".join(authors))
+        publisher = (article.get("publisher") or {}).get("name")
+        if publisher:
+            parts.append(str(publisher))
+        if article.get("date"):
+            parts.append(str(article["date"]))
+
+    book = result.get("book") or {}
+    if book:
+        authors = _names(book.get("author"))
+        if authors:
+            parts.append(f"by {', '.join(authors)}")
+        if book.get("pages"):
+            parts.append(f"{book['pages']} pages")
+        price = book.get("price") or {}
+        if isinstance(price, dict) and price.get("price"):
+            parts.append(f"{price['price']} {price.get('priceCurrency') or ''}".strip())
+        rating_text = _rating_text(book.get("rating"))
+        if rating_text:
+            parts.append(rating_text)
+
+    movie = result.get("movie") or {}
+    if movie:
+        if movie.get("release"):
+            parts.append(str(movie["release"]))
+        if movie.get("duration"):
+            parts.append(str(movie["duration"]))
+        genre = movie.get("genre") or []
+        if genre:
+            parts.append(", ".join(str(g) for g in genre if g))
+        rating_text = _rating_text(movie.get("rating"))
+        if rating_text:
+            parts.append(rating_text)
+
+    software = result.get("software") or {}
+    if software:
+        if software.get("programmingLanguage"):
+            parts.append(str(software["programmingLanguage"]))
+        if software.get("version"):
+            parts.append(f"v{software['version']}")
+        if software.get("stars") is not None:
+            parts.append(f"★ {software['stars']}")
+        if software.get("forks") is not None:
+            parts.append(f"⑂ {software['forks']}")
+
+    recipe = result.get("recipe") or {}
+    if recipe:
+        if recipe.get("time"):
+            parts.append(str(recipe["time"]))
+        if recipe.get("servings"):
+            parts.append(f"{recipe['servings']} servings")
+        if recipe.get("calories"):
+            parts.append(f"{recipe['calories']} cal")
+        rating_text = _rating_text(recipe.get("rating"))
+        if rating_text:
+            parts.append(rating_text)
+
+    product = result.get("product") or {}
+    if product:
+        if product.get("price"):
+            parts.append(str(product["price"]))
+        if product.get("category"):
+            parts.append(str(product["category"]))
+        rating_text = _rating_text(product.get("rating"))
+        if rating_text:
+            parts.append(rating_text)
+
+    # Top-level rating, when no rich type already covered it.
+    if not any(parts):
+        top_rating = _rating_text(result.get("rating"))
+        if top_rating:
+            parts.append(top_rating)
+
+    organization = result.get("organization") or {}
+    if organization.get("name"):
+        parts.append(str(organization["name"]))
+
+    qa = result.get("qa") or {}
+    question = qa.get("question") if isinstance(qa, dict) else None
+    if question:
+        parts.append(f"Q: {question}")
+
+    return parts
+
+
+def _flag_metadata(result: dict[str, t.Any]) -> list[str]:
+    """Boolean-style flags worth surfacing to the UI."""
+    out: list[str] = []
+    if result.get("is_source_local"):
+        out.append("Local")
+    if result.get("is_source_both"):
+        out.append("Local & Web")
+    if result.get("is_live"):
+        out.append("Live")
+    return out
+
+
+_DAY_ABBRS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _todays_hours(opening_hours: dict[str, t.Any] | None) -> str:
+    """Render today's open hours, e.g. ``"Mon 8:00–22:00"``."""
+    if not isinstance(opening_hours, dict):
+        return ""
+    today = opening_hours.get("current_day") or []
+    if not today:
+        return ""
+    spans: list[str] = []
+    label = ""
+    for span in today:
+        if not isinstance(span, dict):
+            continue
+        opens = span.get("opens")
+        closes = span.get("closes")
+        if opens and closes:
+            spans.append(f"{opens}–{closes}")
+        if not label:
+            label = span.get("abbr_name") or span.get("full_name") or ""
+    if not spans:
+        return ""
+    prefix = f"{label} " if label else ""
+    return f"{prefix}{', '.join(spans)}"
+
+
+def _first_review_text(reviews: dict[str, t.Any] | None) -> str:
+    """Return a short excerpt from the first review."""
+    if not isinstance(reviews, dict):
+        return ""
+    items = reviews.get("results") or []
+    if not items:
+        return ""
+    first = items[0] or {}
+    desc = first.get("description") or first.get("title") or ""
+    if not desc:
+        return ""
+    desc = str(desc).strip()
+    if len(desc) > 160:
+        desc = desc[:157] + "…"
+    return f"“{desc}”"
+
+
+def _zoom_to_delta(zoom_level: t.Any) -> float:
+    """Approximate half-width (in degrees) of the viewport at ``zoom_level``.
+
+    Mirrors the Web-Mercator rule of thumb ``180 / 2**zoom`` and clamps to
+    a sensible range so corrupt zooms don't produce world-spanning boxes.
+    """
+    try:
+        z = float(zoom_level)
+    except (TypeError, ValueError):
+        z = 16.0
+    z = max(3.0, min(z, 20.0))
+    return 180.0 / (2 ** z)
+
+
 def _add_web(res: EngineResults, result: dict[str, t.Any]) -> None:
+    metadata_parts: list[str] = []
+    metadata_parts.extend(_flag_metadata(result))
+    subtype = result.get("subtype")
+    if subtype and subtype not in ("generic", "search_result"):
+        metadata_parts.append(str(subtype).replace("_", " ").title())
+    content_type = result.get("content_type")
+    if content_type:
+        metadata_parts.append(str(content_type).replace("_", " ").title())
+    metadata_parts.extend(_rich_type_metadata(result))
+    if result.get("language"):
+        metadata_parts.append(str(result["language"]))
+    snippets = _extra_snippets_text(result)
+    if snippets:
+        metadata_parts.append(snippets)
+
+    # Prefer ``article.author`` for canonical author attribution.
+    article_authors = _names((result.get("article") or {}).get("author"))
+    author = article_authors[0] if article_authors else _author(result)
+
     res.add(
         res.types.MainResult(
             url=result["url"],
@@ -309,13 +532,25 @@ def _add_web(res: EngineResults, result: dict[str, t.Any]) -> None:
             content=_content(result),
             publishedDate=_published_date(result),
             thumbnail=_thumbnail(result) or "",
-            author=_author(result),
-            metadata=_join_metadata(result.get("language") or "", _extra_snippets_text(result)),
+            author=author,
+            metadata=" | ".join(p for p in metadata_parts if p),
         ),
     )
 
 
 def _add_news(res: EngineResults, result: dict[str, t.Any]) -> None:
+    metadata_parts: list[str] = []
+    if result.get("breaking"):
+        metadata_parts.append("Breaking")
+    metadata_parts.extend(_flag_metadata(result))
+    if result.get("language"):
+        metadata_parts.append(str(result["language"]))
+    snippets = _extra_snippets_text(result)
+    if snippets:
+        metadata_parts.append(snippets)
+    # ``source`` is the publisher's plain name (e.g. "Reuters") — preferred
+    # over ``profile.name``/``profile.long_name`` when present.
+    author = result.get("source") or _author(result)
     res.add(
         res.types.MainResult(
             url=result["url"],
@@ -323,14 +558,29 @@ def _add_news(res: EngineResults, result: dict[str, t.Any]) -> None:
             content=_content(result),
             publishedDate=_published_date(result),
             thumbnail=_thumbnail(result) or "",
-            author=_author(result),
-            metadata=_extra_snippets_text(result),
+            author=author,
+            metadata=" | ".join(metadata_parts),
         ),
     )
 
 
 def _add_video(res: EngineResults, result: dict[str, t.Any]) -> None:
     video = result.get("video") or {}
+    metadata_parts: list[str] = []
+    metadata_parts.extend(_flag_metadata(result))
+    if video.get("publisher"):
+        metadata_parts.append(str(video["publisher"]))
+    tags = video.get("tags") or []
+    if tags:
+        metadata_parts.append(", ".join(str(t) for t in tags if t))
+    if video.get("requires_subscription"):
+        metadata_parts.append("Subscription")
+    if result.get("language"):
+        metadata_parts.append(str(result["language"]))
+    snippets = _extra_snippets_text(result)
+    if snippets:
+        metadata_parts.append(snippets)
+    video_author = video.get("author") or {}
     res.add(
         res.types.MainResult(
             template="videos.html",
@@ -341,10 +591,15 @@ def _add_video(res: EngineResults, result: dict[str, t.Any]) -> None:
             thumbnail=_thumbnail(result) or "",
             img_src=_thumbnail_full(result) or "",
             iframe_src=get_embeded_stream_url(result["url"]) or "",
-            author=video.get("creator") or _author(result),
+            author=(
+                video.get("creator")
+                or video_author.get("long_name")
+                or video_author.get("name")
+                or _author(result)
+            ),
             views=str(video.get("views") or ""),
             length=_parse_duration(video.get("duration")),
-            metadata=_extra_snippets_text(result),
+            metadata=" | ".join(metadata_parts),
         ),
     )
 
@@ -354,10 +609,15 @@ def _add_discussion(res: EngineResults, result: dict[str, t.Any]) -> None:
     extras: list[str] = []
     forum = data.get("forum_name")
     answers = data.get("num_answers")
+    score = data.get("score")
     if forum:
         extras.append(str(forum))
+    if score:
+        extras.append(f"↑ {score}")
     if answers is not None:
         extras.append(f"{answers} answers")
+    if result.get("language"):
+        extras.append(str(result["language"]))
     snippets = _extra_snippets_text(result)
     if snippets:
         extras.append(snippets)
@@ -440,6 +700,7 @@ def _add_infobox(res: EngineResults, result: dict[str, t.Any]) -> None:
         return
 
     primary_url = _infobox_url(result)
+    website_url = result.get("website_url") or ""
 
     content_parts = [result.get("description") or "", result.get("long_desc") or ""]
     content = " — ".join(p for p in content_parts if p)
@@ -460,6 +721,9 @@ def _add_infobox(res: EngineResults, result: dict[str, t.Any]) -> None:
     if primary_url:
         urls.append({"title": title, "url": primary_url, "official": True})
         seen_urls.add(primary_url)
+    if website_url and website_url not in seen_urls:
+        urls.append({"title": "Website", "url": website_url, "official": True})
+        seen_urls.add(website_url)
     for provider in result.get("providers") or []:
         p_url = (provider or {}).get("url")
         p_name = (provider or {}).get("name") or (provider or {}).get("long_name") or p_url or ""
@@ -488,17 +752,46 @@ def _add_infobox(res: EngineResults, result: dict[str, t.Any]) -> None:
         attributes.insert(0, {"label": "Category", "value": str(category).capitalize()})
 
     for rating in result.get("ratings") or []:
-        if not isinstance(rating, dict):
-            continue
-        value = rating.get("value") or rating.get("ratingValue")
-        best = rating.get("best") or rating.get("bestRating")
-        count = rating.get("count") or rating.get("ratingCount")
-        if value is None:
-            continue
-        text = f"{value}/{best}" if best else str(value)
-        if count:
-            text += f" ({count})"
-        attributes.append({"label": rating.get("name") or "Rating", "value": text})
+        text = _rating_text(rating, prefix="")
+        if text:
+            attributes.append({"label": (rating or {}).get("name") or "Rating", "value": text})
+
+    distance = result.get("distance") or {}
+    if isinstance(distance, dict) and distance.get("value") is not None:
+        attributes.append(
+            {
+                "label": "Distance",
+                "value": f"{distance['value']} {distance.get('units') or ''}".strip(),
+            }
+        )
+
+    movie = result.get("movie") or {}
+    if movie:
+        if movie.get("release"):
+            attributes.append({"label": "Released", "value": str(movie["release"])})
+        if movie.get("duration"):
+            attributes.append({"label": "Duration", "value": str(movie["duration"])})
+        directors = _names(movie.get("directors"))
+        if directors:
+            attributes.append({"label": "Director", "value": ", ".join(directors)})
+        actors = _names(movie.get("actors"))
+        if actors:
+            attributes.append({"label": "Cast", "value": ", ".join(actors[:8])})
+        genre = movie.get("genre") or []
+        if genre:
+            attributes.append({"label": "Genre", "value": ", ".join(str(g) for g in genre if g)})
+        movie_rating = _rating_text(movie.get("rating"), prefix="")
+        if movie_rating:
+            attributes.append({"label": "Movie rating", "value": movie_rating})
+
+    subtype = result.get("subtype")
+    if subtype and subtype != "generic" and not category:
+        attributes.insert(0, {"label": "Type", "value": str(subtype).replace("_", " ").title()})
+
+    for source_url in result.get("found_in_urls") or []:
+        if source_url and source_url not in seen_urls:
+            urls.append({"title": "Source", "url": source_url})
+            seen_urls.add(source_url)
 
     payload = {
         "infobox": title,
@@ -516,9 +809,16 @@ def _add_location(res: EngineResults, result: dict[str, t.Any]) -> None:
     if not title:
         return
 
-    coordinates = result.get("coordinates") or {}
-    latitude = coordinates.get("latitude") or coordinates.get("lat")
-    longitude = coordinates.get("longitude") or coordinates.get("lng") or coordinates.get("lon")
+    # Brave returns ``coordinates`` as either a ``[lat, lng]`` list or, in
+    # rare cases, a ``{lat, lng}`` dict. Handle both without crashing.
+    raw_coords = result.get("coordinates")
+    latitude: t.Any = None
+    longitude: t.Any = None
+    if isinstance(raw_coords, (list, tuple)) and len(raw_coords) >= 2:
+        latitude, longitude = raw_coords[0], raw_coords[1]
+    elif isinstance(raw_coords, dict):
+        latitude = raw_coords.get("latitude") or raw_coords.get("lat")
+        longitude = raw_coords.get("longitude") or raw_coords.get("lng") or raw_coords.get("lon")
 
     postal = result.get("postal_address") or {}
     address = {
@@ -531,43 +831,87 @@ def _add_location(res: EngineResults, result: dict[str, t.Any]) -> None:
     }
 
     links: list[dict[str, str]] = []
+    seen_link_urls: set[str] = set()
+
+    def _push_link(label: str, url: str, url_label: str | None = None) -> None:
+        if not url or url in seen_link_urls:
+            return
+        links.append({"label": label, "url": url, "url_label": url_label or url})
+        seen_link_urls.add(url)
+
     contact = result.get("contact") or {}
     phone = contact.get("telephone") or contact.get("phone") or result.get("phone")
     if phone:
-        links.append({"label": "phone", "url": f"tel:{phone}", "url_label": str(phone)})
+        _push_link("phone", f"tel:{phone}", str(phone))
     website = result.get("website") or result.get("url")
     if website:
-        links.append({"label": "website", "url": website, "url_label": website})
+        _push_link("website", website)
     email = contact.get("email")
     if email:
-        links.append({"label": "email", "url": f"mailto:{email}", "url_label": email})
+        _push_link("email", f"mailto:{email}", email)
+    action = result.get("action") or {}
+    action_url = action.get("url") if isinstance(action, dict) else None
+    if action_url:
+        _push_link(str(action.get("type") or "action"), action_url)
+    if result.get("provider_url"):
+        _push_link("provider", result["provider_url"])
+    for profile in result.get("profiles") or []:
+        p_url = (profile or {}).get("url")
+        p_name = (profile or {}).get("long_name") or (profile or {}).get("name") or ""
+        if p_url:
+            _push_link(p_name or "profile", p_url)
 
     boundingbox = None
+    geojson: dict[str, t.Any] | None = None
     if latitude is not None and longitude is not None:
         try:
             lat = float(latitude)
             lon = float(longitude)
-            # Tiny ±0.01° box around the point so the map template has bounds.
-            boundingbox = [lat - 0.01, lat + 0.01, lon - 0.01, lon + 0.01]
-            geojson: dict[str, t.Any] | None = {"type": "Point", "coordinates": [lon, lat]}
+            delta = _zoom_to_delta(result.get("zoom_level"))
+            boundingbox = [lat - delta, lat + delta, lon - delta, lon + delta]
+            geojson = {"type": "Point", "coordinates": [lon, lat]}
         except (TypeError, ValueError):
-            geojson = None
-    else:
-        geojson = None
+            pass
+
+    metadata_parts: list[str] = []
+    rating_text = _rating_text(result.get("rating"))
+    if rating_text:
+        metadata_parts.append(rating_text)
+    if result.get("price_range"):
+        metadata_parts.append(str(result["price_range"]))
+    distance = result.get("distance") or {}
+    if isinstance(distance, dict) and distance.get("value") is not None:
+        unit = distance.get("units") or ""
+        metadata_parts.append(f"{distance['value']} {unit}".strip())
+    cats = result.get("categories") or []
+    if cats:
+        metadata_parts.append(", ".join(str(c) for c in cats if c))
+    cuisine = result.get("serves_cuisine") or []
+    if cuisine:
+        metadata_parts.append(", ".join(str(c) for c in cuisine if c))
+    hours = _todays_hours(result.get("opening_hours"))
+    if hours:
+        metadata_parts.append(hours)
+    if result.get("timezone"):
+        metadata_parts.append(str(result["timezone"]))
+    review_excerpt = _first_review_text(result.get("reviews"))
+    if review_excerpt:
+        metadata_parts.append(review_excerpt)
 
     payload: dict[str, t.Any] = {
         "template": "map.html",
         "title": title,
         "url": result.get("url") or website or "",
-        "content": result.get("description") or "",
+        "content": result.get("description") or postal.get("displayAddress") or "",
         "thumbnail": _thumbnail(result) or "",
         "address": address,
         "links": links,
-        "type": result.get("type") or (result.get("subtype") or ""),
+        "type": result.get("icon_category") or result.get("type") or (result.get("subtype") or ""),
         "longitude": longitude,
         "latitude": latitude,
         "boundingbox": boundingbox,
         "geojson": geojson,
+        "metadata": " | ".join(p for p in metadata_parts if p),
     }
     if not payload["url"]:
         # The map template requires a clickable URL; fall back to a search link.
@@ -609,10 +953,31 @@ def response(resp: "SXNG_Response") -> EngineResults:
 
     data = resp.json()
 
+    query_meta = data.get("query") or {}
+
+    # Surface spellcheck rewrite + applied operators as suggestions on web.
+    if search_type == "web":
+        altered = query_meta.get("altered")
+        original = query_meta.get("original")
+        if altered and altered != original:
+            res.add(res.types.LegacyResult({"suggestion": altered}))
+        ops = query_meta.get("search_operators") or {}
+        cleaned = ops.get("cleaned_query") if isinstance(ops, dict) else None
+        if ops.get("applied") and cleaned and cleaned != original and cleaned != altered:
+            res.add(res.types.LegacyResult({"suggestion": cleaned}))
+
+    if query_meta.get("spellcheck_off"):
+        logger.debug("Brave API: spellcheck disabled for this query")
+
     section_key, add_fn = _DISPATCH[search_type]
     section = data.get(section_key) or {}
+    if section.get("mutated_by_goggles"):
+        logger.debug("Brave API: results mutated by goggles for section %s", section_key)
+
     for result in section.get("results", []) or []:
         if not include_sponsored and result.get("sponsored"):
+            continue
+        if family_friendly_only and result.get("family_friendly") is False:
             continue
         # `infobox`/`faq`/`locations` entries don't always carry a top-level
         # `title`; the type-specific parsers do their own validation.
