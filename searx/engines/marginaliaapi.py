@@ -16,7 +16,7 @@ Optional settings are:
 - :py:obj:`domain_count`
 - :py:obj:`query_timeout`
 - :py:obj:`custom_filter`
-- :py:obj:`language`
+- :py:obj:`default_lang`
 
 .. code:: yaml
 
@@ -27,7 +27,7 @@ Optional settings are:
     domain_count: 2          # optional, 1-100 (max results per domain)
     query_timeout: 150       # optional, 50-250 (ms; query execution limit)
     # custom_filter: 'my-filter'  # optional; v2 server-side filter name
-    # language: 'en'              # optional; ISO-639-1 hint (default 'en')
+    # default_lang: 'en'              # optional; ISO-639-1 hint (default 'en')
 
 Marginalia is a small, independent search engine focused on the
 non-commercial, text-heavy web. The v2 API supports paging, NSFW filtering
@@ -81,7 +81,7 @@ custom_filter: str = ""
 """Optional server-side filter name (Marginalia ``filter``). Filters are
 created via the v2 ``/filter`` endpoints; leave empty for no filter."""
 
-language: str = "en"
+default_lang: str = "en"
 """Default ISO-639-1 language hint sent as ``lang`` when SearXNG's locale
 selection is ``all`` or otherwise unresolvable. The API itself defaults to
 ``en`` server-side."""
@@ -101,14 +101,14 @@ def _resolve_lang(searxng_locale: str | None) -> str:
 
     Marginalia's ``lang`` parameter is a single language code (no region),
     so we strip script/region subtags. Falls back to the configured
-    :py:obj:`language` when the locale is empty, ``all`` or non-alphabetic.
+    :py:obj:`default_lang` when the locale is empty, ``all`` or non-alphabetic.
     """
     if not searxng_locale or searxng_locale == "all":
-        return language
+        return default_lang
     head = searxng_locale.replace("_", "-").split("-", 1)[0].lower()
     if len(head) == 2 and head.isalpha():
         return head
-    return language
+    return default_lang
 
 
 def request(query: str, params: "OnlineParams") -> None:
