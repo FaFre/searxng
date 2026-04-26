@@ -154,6 +154,11 @@ def _format_label(fmt: str) -> str:
     return _FORMAT_LABELS.get(fmt.lower(), fmt.upper() if len(fmt) <= 5 else fmt)
 
 
+def _format_metadata(items: list[tuple[str, str]]) -> str:
+    """Format structured metadata items into a ``key: value`` string."""
+    return " | ".join(f"{k}: {v}" for k, v in items)
+
+
 def response(resp: "SXNG_Response") -> EngineResults:
     """Process the API response and return results."""
     res = EngineResults()
@@ -171,23 +176,23 @@ def response(resp: "SXNG_Response") -> EngineResults:
         if not url or not title:
             continue
 
-        metadata_parts: list[str] = []
+        metadata_items: list[tuple[str, str]] = []
         fmt_label = _format_label(result.get("format") or "")
         if fmt_label:
-            metadata_parts.append(fmt_label)
+            metadata_items.append(("format", fmt_label))
         quality = result.get("quality")
         if isinstance(quality, (int, float)):
-            metadata_parts.append(f"quality: {quality:.2f}")
+            metadata_items.append(("quality", f"{quality:.2f}"))
         results_from_domain = result.get("resultsFromDomain")
         if isinstance(results_from_domain, int) and results_from_domain > 1:
-            metadata_parts.append(f"{results_from_domain} from domain")
+            metadata_items.append(("results_from_domain", str(results_from_domain)))
 
         res.add(
             res.types.MainResult(
                 url=url,
                 title=title,
                 content=result.get("description") or "",
-                metadata=" | ".join(metadata_parts),
+                metadata=_format_metadata(metadata_items),
             ),
         )
 
