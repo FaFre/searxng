@@ -186,6 +186,10 @@ def request(query: str, params: "OnlineParams") -> None:
         "q": query,
         "count": results_per_page,
         "offset": pageno - 1,
+        # Strip Brave's ``<strong>`` highlight markers — SearXNG templates
+        # render the title/description as plain text and would otherwise
+        # show literal tags.
+        "text_decorations": "false",
     }
 
     if params["time_range"]:
@@ -396,50 +400,179 @@ def _add_faq(res: EngineResults, result: dict[str, t.Any]) -> None:
     )
 
 
+def _normalize_attribute(entry: t.Any) -> dict[str, str] | None:
+    """Coerce a Brave infobox attribute into ``{label, value}``.
+
+    Brave returns these as either ``[label, value]`` tuples or
+    ``{"label": ..., "value": ...}`` objects, depending on subtype.
+    """
+    if isinstance(entry, dict):
+        label = entry.get("label") or entry.get("name") or ""
+        value = entry.get("value") or entry.get("text") or ""
+    elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+        label, value = entry[0], entry[1]
+    else:
+        return None
+    label = str(label).strip()
+    value = str(value).strip()
+    if not label and not value:
+        return None
+    return {"label": label, "value": value}
+
+
+def _infobox_url(result: dict[str, t.Any]) -> str:
+    """Best-effort canonical URL for an infobox entry."""
+    url = result.get("url")
+    if url:
+        return url
+    meta = result.get("meta_url") or {}
+    scheme = meta.get("scheme") or "https"
+    netloc = meta.get("netloc") or meta.get("hostname")
+    path = meta.get("path") or ""
+    if netloc:
+        return f"{scheme}://{netloc}{path}"
+    return ""
+
+
 def _add_infobox(res: EngineResults, result: dict[str, t.Any]) -> None:
-    url = result.get("url") or ""
     title = result.get("title") or result.get("label") or ""
-    if not url or not title:
+    if not title:
         return
-    parts: list[str] = []
-    if result.get("description"):
-        parts.append(result["description"])
-    long_desc = result.get("long_desc")
-    if long_desc:
-        parts.append(long_desc)
-    res.add(
-        res.types.MainResult(
-            url=url,
-            title=title,
-            content=" — ".join(p for p in parts if p),
-            thumbnail=_thumbnail(result) or "",
-        ),
-    )
+
+    primary_url = _infobox_url(result)
+
+    content_parts = [result.get("description") or "", result.get("long_desc") or ""]
+    content = " — ".join(p for p in content_parts if p)
+
+    attributes: list[dict[str, str]] = []
+    for entry in result.get("attributes") or []:
+        norm = _normalize_attribute(entry)
+        if norm:
+            attributes.append(norm)
+    entity_info = result.get("entity_info") or {}
+    for entry in entity_info.get("attributes") or []:
+        norm = _normalize_attribute(entry)
+        if norm:
+            attributes.append(norm)
+
+    urls: list[dict[str, str | bool]] = []
+    seen_urls: set[str] = set()
+    if primary_url:
+        urls.append({"title": title, "url": primary_url, "official": True})
+        seen_urls.add(primary_url)
+    for provider in result.get("providers") or []:
+        p_url = (provider or {}).get("url")
+        p_name = (provider or {}).get("name") or (provider or {}).get("long_name") or p_url or ""
+        if p_url and p_url not in seen_urls:
+            urls.append({"title": p_name, "url": p_url})
+            seen_urls.add(p_url)
+    for profile in result.get("profiles") or []:
+        p_url = (profile or {}).get("url")
+        p_name = (profile or {}).get("name") or (profile or {}).get("long_name") or p_url or ""
+        if p_url and p_url not in seen_urls:
+            urls.append({"title": p_name, "url": p_url})
+            seen_urls.add(p_url)
+
+    img_src = ""
+    for image in result.get("images") or []:
+        if not image or image.get("logo"):
+            continue
+        img_src = image.get("original") or image.get("url") or image.get("src") or ""
+        if img_src:
+            break
+    if not img_src:
+        img_src = _thumbnail_full(result) or ""
+
+    category = result.get("category")
+    if category:
+        attributes.insert(0, {"label": "Category", "value": str(category).capitalize()})
+
+    for rating in result.get("ratings") or []:
+        if not isinstance(rating, dict):
+            continue
+        value = rating.get("value") or rating.get("ratingValue")
+        best = rating.get("best") or rating.get("bestRating")
+        count = rating.get("count") or rating.get("ratingCount")
+        if value is None:
+            continue
+        text = f"{value}/{best}" if best else str(value)
+        if count:
+            text += f" ({count})"
+        attributes.append({"label": rating.get("name") or "Rating", "value": text})
+
+    payload = {
+        "infobox": title,
+        "id": primary_url or None,
+        "content": content,
+        "img_src": img_src,
+        "attributes": attributes,
+        "urls": urls,
+    }
+    res.add(res.types.LegacyResult(payload))
 
 
 def _add_location(res: EngineResults, result: dict[str, t.Any]) -> None:
-    url = result.get("url") or ""
     title = result.get("title") or ""
-    if not url or not title:
+    if not title:
         return
+
+    coordinates = result.get("coordinates") or {}
+    latitude = coordinates.get("latitude") or coordinates.get("lat")
+    longitude = coordinates.get("longitude") or coordinates.get("lng") or coordinates.get("lon")
+
     postal = result.get("postal_address") or {}
-    addr_parts = [
-        postal.get("streetAddress"),
-        postal.get("addressLocality"),
-        postal.get("addressRegion"),
-        postal.get("postalCode"),
-        postal.get("addressCountry"),
-    ]
-    address = ", ".join(p for p in addr_parts if p)
-    res.add(
-        res.types.MainResult(
-            url=url,
-            title=title,
-            content=result.get("description") or "",
-            thumbnail=_thumbnail(result) or "",
-            metadata=address,
-        ),
-    )
+    address = {
+        "name": postal.get("name") or title,
+        "house_number": postal.get("streetNumber") or postal.get("house_number"),
+        "road": postal.get("streetAddress") or postal.get("road"),
+        "locality": postal.get("addressLocality") or postal.get("locality"),
+        "postcode": postal.get("postalCode") or postal.get("postcode"),
+        "country": postal.get("addressCountry") or postal.get("country"),
+    }
+
+    links: list[dict[str, str]] = []
+    contact = result.get("contact") or {}
+    phone = contact.get("telephone") or contact.get("phone") or result.get("phone")
+    if phone:
+        links.append({"label": "phone", "url": f"tel:{phone}", "url_label": str(phone)})
+    website = result.get("website") or result.get("url")
+    if website:
+        links.append({"label": "website", "url": website, "url_label": website})
+    email = contact.get("email")
+    if email:
+        links.append({"label": "email", "url": f"mailto:{email}", "url_label": email})
+
+    boundingbox = None
+    if latitude is not None and longitude is not None:
+        try:
+            lat = float(latitude)
+            lon = float(longitude)
+            # Tiny ±0.01° box around the point so the map template has bounds.
+            boundingbox = [lat - 0.01, lat + 0.01, lon - 0.01, lon + 0.01]
+            geojson: dict[str, t.Any] | None = {"type": "Point", "coordinates": [lon, lat]}
+        except (TypeError, ValueError):
+            geojson = None
+    else:
+        geojson = None
+
+    payload: dict[str, t.Any] = {
+        "template": "map.html",
+        "title": title,
+        "url": result.get("url") or website or "",
+        "content": result.get("description") or "",
+        "thumbnail": _thumbnail(result) or "",
+        "address": address,
+        "links": links,
+        "type": result.get("type") or (result.get("subtype") or ""),
+        "longitude": longitude,
+        "latitude": latitude,
+        "boundingbox": boundingbox,
+        "geojson": geojson,
+    }
+    if not payload["url"]:
+        # The map template requires a clickable URL; fall back to a search link.
+        return
+    res.add(res.types.LegacyResult(payload))
 
 
 _DISPATCH: dict[str, tuple[str, t.Callable[[EngineResults, dict[str, t.Any]], None]]] = {
