@@ -47,7 +47,7 @@ from dateutil import parser
 from searx.enginelib.traits import EngineTraits
 from searx.exceptions import SearxEngineAPIException
 from searx.result_types import EngineResults
-from searx.utils import get_embeded_stream_url
+from searx.utils import get_embeded_stream_url, html_to_text
 
 logger = logging.getLogger("searx.engines.braveapi")
 
@@ -666,6 +666,8 @@ def _normalize_attribute(entry: t.Any) -> dict[str, str] | None:
 
     Brave returns these as either ``[label, value]`` tuples or
     ``{"label": ..., "value": ...}`` objects, depending on subtype.
+    Both fields are stripped of HTML to produce plain text for the
+    infobox template.
     """
     if isinstance(entry, dict):
         label = entry.get("label") or entry.get("name") or ""
@@ -674,8 +676,8 @@ def _normalize_attribute(entry: t.Any) -> dict[str, str] | None:
         label, value = entry[0], entry[1]
     else:
         return None
-    label = str(label).strip()
-    value = str(value).strip()
+    label = html_to_text(str(label).strip())
+    value = html_to_text(str(value).strip())
     if not label and not value:
         return None
     return {"label": label, "value": value}
@@ -703,7 +705,7 @@ def _add_infobox(res: EngineResults, result: dict[str, t.Any]) -> None:
     primary_url = _infobox_url(result)
     website_url = result.get("website_url") or ""
 
-    content_parts = [result.get("description") or "", result.get("long_desc") or ""]
+    content_parts = [html_to_text(result.get("description") or ""), html_to_text(result.get("long_desc") or "")]
     content = " — ".join(p for p in content_parts if p)
 
     attributes: list[dict[str, str]] = []
