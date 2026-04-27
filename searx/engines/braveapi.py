@@ -252,17 +252,35 @@ def _published_date(result: dict[str, t.Any]):
 
 
 def _content(result: dict[str, t.Any]) -> str:
-    return result.get("description") or ""
+    return html_to_text(result.get("description") or "")
 
 
-def _extra_snippets_text(result: dict[str, t.Any]) -> str:
-    """Join non-empty ``extra_snippets`` for use in ``metadata``."""
-    return " — ".join(s for s in (result.get("extra_snippets") or []) if s)
+def _extra_snippets(result: dict[str, t.Any]) -> list[str]:
+    """Return non-empty, HTML-stripped ``extra_snippets`` entries."""
+    snippets: list[str] = []
+    for raw in result.get("extra_snippets") or []:
+        if not raw:
+            continue
+        text = html_to_text(str(raw)).strip()
+        if text:
+            snippets.append(text)
+    return snippets
+
+
+def _extend_with_snippets(items: list[tuple[str, str]], result: dict[str, t.Any]) -> None:
+    """Append each non-empty extra snippet as its own ``snippet`` metadata item."""
+    for snippet in _extra_snippets(result):
+        items.append(("snippet", snippet))
 
 
 def _format_metadata(items: list[tuple[str, str]]) -> str:
     """Format structured metadata items into a ``key: value`` string."""
     return " | ".join(f"{k}: {v}" for k, v in items)
+
+
+def _metadata_dicts(items: list[tuple[str, str]]) -> list[dict[str, str]]:
+    """Convert metadata tuples to ``{"key": ..., "value": ...}`` dicts for API consumers."""
+    return [{"key": k, "value": v} for k, v in items]
 
 
 def _thumbnail(result: dict[str, t.Any]) -> str | None:
@@ -432,7 +450,9 @@ def _rich_type_items(result: dict[str, t.Any]) -> list[tuple[str, str]]:
     qa = result.get("qa") or {}
     question = qa.get("question") if isinstance(qa, dict) else None
     if question:
-        items.append(("question", str(question)))
+        question_text = html_to_text(str(question)).strip()
+        if question_text:
+            items.append(("question", question_text))
 
     return items
 
@@ -484,10 +504,9 @@ def _first_review_text(reviews: dict[str, t.Any] | None) -> str:
     if not items:
         return ""
     first = items[0] or {}
-    desc = first.get("description") or first.get("title") or ""
+    desc = html_to_text(str(first.get("description") or first.get("title") or "")).strip()
     if not desc:
         return ""
-    desc = str(desc).strip()
     if len(desc) > 160:
         desc = desc[:157] + "…"
     return f"“{desc}”"
@@ -519,9 +538,7 @@ def _add_web(res: EngineResults, result: dict[str, t.Any]) -> None:
     metadata_items.extend(_rich_type_items(result))
     if result.get("language"):
         metadata_items.append(("language", str(result["language"])))
-    snippets = _extra_snippets_text(result)
-    if snippets:
-        metadata_items.append(("snippets", snippets))
+    _extend_with_snippets(metadata_items, result)
 
     # Prefer ``article.author`` for canonical author attribution.
     article_authors = _names((result.get("article") or {}).get("author"))
@@ -536,6 +553,7 @@ def _add_web(res: EngineResults, result: dict[str, t.Any]) -> None:
             thumbnail=_thumbnail(result) or "",
             author=author,
             metadata=_format_metadata(metadata_items),
+            metadata_items=_metadata_dicts(metadata_items),
         ),
     )
 
@@ -547,9 +565,7 @@ def _add_news(res: EngineResults, result: dict[str, t.Any]) -> None:
     metadata_items.extend(_flag_items(result))
     if result.get("language"):
         metadata_items.append(("language", str(result["language"])))
-    snippets = _extra_snippets_text(result)
-    if snippets:
-        metadata_items.append(("snippets", snippets))
+    _extend_with_snippets(metadata_items, result)
     # ``source`` is the publisher's plain name (e.g. "Reuters") — preferred
     # over ``profile.name``/``profile.long_name`` when present.
     author = result.get("source") or _author(result)
@@ -562,6 +578,7 @@ def _add_news(res: EngineResults, result: dict[str, t.Any]) -> None:
             thumbnail=_thumbnail(result) or "",
             author=author,
             metadata=_format_metadata(metadata_items),
+            metadata_items=_metadata_dicts(metadata_items),
         ),
     )
 
@@ -579,9 +596,7 @@ def _add_video(res: EngineResults, result: dict[str, t.Any]) -> None:
         metadata_items.append(("access", "Subscription"))
     if result.get("language"):
         metadata_items.append(("language", str(result["language"])))
-    snippets = _extra_snippets_text(result)
-    if snippets:
-        metadata_items.append(("snippets", snippets))
+    _extend_with_snippets(metadata_items, result)
     video_author = video.get("author") or {}
     res.add(
         res.types.MainResult(
@@ -602,6 +617,7 @@ def _add_video(res: EngineResults, result: dict[str, t.Any]) -> None:
             views=str(video.get("views") or ""),
             length=_parse_duration(video.get("duration")),
             metadata=_format_metadata(metadata_items),
+            metadata_items=_metadata_dicts(metadata_items),
         ),
     )
 
@@ -620,19 +636,16 @@ def _add_discussion(res: EngineResults, result: dict[str, t.Any]) -> None:
         metadata_items.append(("answers", f"{answers} answers"))
     if result.get("language"):
         metadata_items.append(("language", str(result["language"])))
-    snippets = _extra_snippets_text(result)
-    if snippets:
-        metadata_items.append(("snippets", snippets))
+    _extend_with_snippets(metadata_items, result)
 
     body_parts: list[str] = []
-    if data.get("question"):
-        body_parts.append(data["question"])
-    if data.get("top_comment"):
-        body_parts.append(data["top_comment"])
-    desc = result.get("description") or ""
-    if desc:
-        body_parts.append(desc)
-    content = " — ".join(p for p in body_parts if p)
+    for raw in (data.get("question"), data.get("top_comment"), result.get("description")):
+        if not raw:
+            continue
+        text = html_to_text(str(raw)).strip()
+        if text:
+            body_parts.append(text)
+    content = " — ".join(body_parts)
 
     res.add(
         res.types.MainResult(
@@ -642,13 +655,14 @@ def _add_discussion(res: EngineResults, result: dict[str, t.Any]) -> None:
             publishedDate=_published_date(result),
             thumbnail=_thumbnail(result) or "",
             metadata=_format_metadata(metadata_items),
+            metadata_items=_metadata_dicts(metadata_items),
         ),
     )
 
 
 def _add_faq(res: EngineResults, result: dict[str, t.Any]) -> None:
-    question = result.get("question") or result.get("title") or ""
-    answer = result.get("answer") or result.get("description") or ""
+    question = html_to_text(str(result.get("question") or result.get("title") or "")).strip()
+    answer = html_to_text(str(result.get("answer") or result.get("description") or "")).strip()
     url = result.get("url") or ""
     if not url or not question:
         return
@@ -905,7 +919,9 @@ def _add_location(res: EngineResults, result: dict[str, t.Any]) -> None:
         "template": "map.html",
         "title": title,
         "url": result.get("url") or website or "",
-        "content": result.get("description") or postal.get("displayAddress") or "",
+        "content": html_to_text(str(result.get("description") or "")).strip()
+        or postal.get("displayAddress")
+        or "",
         "thumbnail": _thumbnail(result) or "",
         "address": address,
         "links": links,
@@ -915,6 +931,7 @@ def _add_location(res: EngineResults, result: dict[str, t.Any]) -> None:
         "boundingbox": boundingbox,
         "geojson": geojson,
         "metadata": _format_metadata(metadata_items),
+        "metadata_items": _metadata_dicts(metadata_items),
     }
     if not payload["url"]:
         # The map template requires a clickable URL; fall back to a search link.
