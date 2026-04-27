@@ -265,6 +265,11 @@ def _format_metadata(items: list[tuple[str, str]]) -> str:
     return " | ".join(f"{k}: {v}" for k, v in items)
 
 
+def _metadata_dicts(items: list[tuple[str, str]]) -> list[dict[str, str]]:
+    """Convert metadata tuples to ``{"key": ..., "value": ...}`` dicts for API consumers."""
+    return [{"key": k, "value": v} for k, v in items]
+
+
 def response(resp: "SXNG_Response") -> EngineResults:
     """Process the API response and return results."""
     res = EngineResults()
@@ -322,6 +327,7 @@ def response(resp: "SXNG_Response") -> EngineResults:
                 ),
                 thumbnail=thumbnail,
                 metadata=_format_metadata(metadata_items),
+                metadata_items=_metadata_dicts(metadata_items),
             ),
         )
 
