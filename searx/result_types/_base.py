@@ -386,6 +386,13 @@ class MainResult(Result):  # pylint: disable=missing-class-docstring
     metadata: str = ""
     """Miscellaneous metadata."""
 
+    metadata_items: list[dict[str, str]] = []
+    """Structured metadata items as ``[{"key": ..., "value": ...}]`` pairs.
+
+    Engines that build their own metadata can populate this field to expose
+    the underlying key/value pairs to API consumers, in addition to the
+    flattened ``metadata`` string used by HTML templates."""
+
     PriorityType = t.Literal["", "high", "low"]  # pyright: ignore[reportUnannotatedClassAttribute]
     priority: "MainResult.PriorityType" = ""
     """The priority can be set via :ref:`hostnames plugin`, for example."""
