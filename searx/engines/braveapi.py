@@ -547,7 +547,7 @@ def _add_web(res: EngineResults, result: dict[str, t.Any]) -> None:
     res.add(
         res.types.MainResult(
             url=result["url"],
-            title=result["title"],
+            title=html_to_text(result["title"]),
             content=_content(result),
             publishedDate=_published_date(result),
             thumbnail=_thumbnail(result) or "",
@@ -572,7 +572,7 @@ def _add_news(res: EngineResults, result: dict[str, t.Any]) -> None:
     res.add(
         res.types.MainResult(
             url=result["url"],
-            title=result["title"],
+            title=html_to_text(result["title"]),
             content=_content(result),
             publishedDate=_published_date(result),
             thumbnail=_thumbnail(result) or "",
@@ -602,7 +602,7 @@ def _add_video(res: EngineResults, result: dict[str, t.Any]) -> None:
         res.types.MainResult(
             template="videos.html",
             url=result["url"],
-            title=result["title"],
+            title=html_to_text(result["title"]),
             content=_content(result),
             publishedDate=_published_date(result),
             thumbnail=_thumbnail(result) or "",
@@ -650,7 +650,7 @@ def _add_discussion(res: EngineResults, result: dict[str, t.Any]) -> None:
     res.add(
         res.types.MainResult(
             url=result["url"],
-            title=result["title"],
+            title=html_to_text(result["title"]),
             content=content,
             publishedDate=_published_date(result),
             thumbnail=_thumbnail(result) or "",
@@ -712,7 +712,7 @@ def _infobox_url(result: dict[str, t.Any]) -> str:
 
 
 def _add_infobox(res: EngineResults, result: dict[str, t.Any]) -> None:
-    title = result.get("title") or result.get("label") or ""
+    title = html_to_text(result.get("title") or result.get("label") or "")
     if not title:
         return
 
@@ -822,7 +822,7 @@ def _add_infobox(res: EngineResults, result: dict[str, t.Any]) -> None:
 
 
 def _add_location(res: EngineResults, result: dict[str, t.Any]) -> None:
-    title = result.get("title") or ""
+    title = html_to_text(result.get("title") or "")
     if not title:
         return
 
