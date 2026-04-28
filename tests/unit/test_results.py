@@ -2,8 +2,8 @@
 # pylint: disable=missing-module-docstring,disable=missing-class-docstring,invalid-name
 
 
-from searx.result_types import LegacyResult
-from searx.results import ResultContainer
+from searx.result_types import LegacyResult, MainResult
+from searx.results import ResultContainer, merge_two_main_results
 from tests import SearxTestCase
 
 
@@ -58,3 +58,166 @@ class ResultContainerTestCase(SearxTestCase):
         self.assertIn(result, result_list)
         self.assertEqual(result_list[0].title, result.title)
         self.assertEqual(result_list[0].content, result.content)
+
+    def test_merge_url_result_accumulates_metadata(self):
+        eng1 = dict(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="google",
+            metadata="meta1",
+        )
+        eng2 = dict(
+            url="http://example.org",
+            title="title",
+            content="content",
+            engine="duckduckgo",
+            metadata="meta2",
+        )
+
+        container = ResultContainer()
+        container.extend(None, [eng1, eng2])
+        container.close()
+
+        result_list = container.get_ordered_results()
+        self.assertEqual(len(result_list), 1)
+        self.assertIn("meta1", result_list[0]["metadata"])
+        self.assertIn("meta2", result_list[0]["metadata"])
+
+    def test_merge_url_result_metadata_no_duplicate(self):
+        eng1 = dict(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="google",
+            metadata="same_meta",
+        )
+        eng2 = dict(
+            url="http://example.org",
+            title="title",
+            content="content",
+            engine="duckduckgo",
+            metadata="same_meta",
+        )
+
+        container = ResultContainer()
+        container.extend(None, [eng1, eng2])
+        container.close()
+
+        result_list = container.get_ordered_results()
+        self.assertEqual(len(result_list), 1)
+        self.assertEqual(result_list[0]["metadata"], "same_meta")
+
+    def test_merge_url_result_metadata_one_empty(self):
+        eng1 = dict(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="google",
+        )
+        eng2 = dict(
+            url="http://example.org",
+            title="title",
+            content="content",
+            engine="duckduckgo",
+            metadata="meta2",
+        )
+
+        container = ResultContainer()
+        container.extend(None, [eng1, eng2])
+        container.close()
+
+        result_list = container.get_ordered_results()
+        self.assertEqual(len(result_list), 1)
+        self.assertEqual(result_list[0]["metadata"], "meta2")
+
+
+class MergeMainResultTestCase(SearxTestCase):
+
+    def test_merge_accumulates_metadata(self):
+        origin = MainResult(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="google",
+            metadata="meta1",
+        )
+        other = MainResult(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="duckduckgo",
+            metadata="meta2",
+        )
+        merge_two_main_results(origin, other)
+        self.assertIn("meta1", origin.metadata)
+        self.assertIn("meta2", origin.metadata)
+
+    def test_merge_accumulates_metadata_items(self):
+        origin = MainResult(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="google",
+            metadata_items=[{"key": "k1", "value": "v1"}],
+        )
+        other = MainResult(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="duckduckgo",
+            metadata_items=[{"key": "k2", "value": "v2"}],
+        )
+        merge_two_main_results(origin, other)
+        self.assertEqual(len(origin.metadata_items), 2)
+
+    def test_merge_metadata_items_no_duplicates(self):
+        origin = MainResult(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="google",
+            metadata_items=[{"key": "k1", "value": "v1"}],
+        )
+        other = MainResult(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="duckduckgo",
+            metadata_items=[{"key": "k1", "value": "v1"}],
+        )
+        merge_two_main_results(origin, other)
+        self.assertEqual(len(origin.metadata_items), 1)
+
+    def test_merge_metadata_one_empty(self):
+        origin = MainResult(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="google",
+        )
+        other = MainResult(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="duckduckgo",
+            metadata="meta2",
+        )
+        merge_two_main_results(origin, other)
+        self.assertEqual(origin.metadata, "meta2")
+
+    def test_merge_metadata_both_empty(self):
+        origin = MainResult(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="google",
+        )
+        other = MainResult(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="duckduckgo",
+        )
+        merge_two_main_results(origin, other)
+        self.assertEqual(origin.metadata, "")

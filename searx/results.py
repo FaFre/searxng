@@ -371,6 +371,27 @@ def merge_two_main_results(origin: MainResult | LegacyResult, other: MainResult 
     elif isinstance(other, LegacyResult) and isinstance(origin, LegacyResult):
         origin.defaults_from(other)
 
+    # accumulate metadata from both results
+    if isinstance(origin, MainResult) and isinstance(other, MainResult):
+        if other.metadata and other.metadata not in (origin.metadata or ""):
+            if origin.metadata:
+                origin.metadata = origin.metadata + " / " + other.metadata
+            else:
+                origin.metadata = other.metadata
+        if other.metadata_items:
+            existing_keys = {(item["key"], item["value"]) for item in origin.metadata_items}
+            for item in other.metadata_items:
+                if (item["key"], item["value"]) not in existing_keys:
+                    origin.metadata_items.append(item)
+    elif isinstance(origin, LegacyResult) and isinstance(other, LegacyResult):
+        other_metadata = other.get("metadata", "")
+        if other_metadata and other_metadata not in (origin.get("metadata", "") or ""):
+            origin_metadata = origin.get("metadata", "")
+            if origin_metadata:
+                origin["metadata"] = origin_metadata + " / " + other_metadata
+            else:
+                origin["metadata"] = other_metadata
+
     # add engine to list of result-engines
     origin.engines.add(other.engine or "")
 
