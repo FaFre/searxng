@@ -19,7 +19,7 @@ class SearchQueryTestCase(SearxTestCase):
     def test_repr(self):
         s = SearchQuery('test', [EngineRef('bing', 'general')], 'all', 0, 1, '1', 5.0, 'g')
         self.assertEqual(
-            repr(s), "SearchQuery('test', [EngineRef('bing', 'general')], 'all', 0, 1, '1', 5.0, 'g', None)"
+            repr(s), "SearchQuery('test', [EngineRef('bing', 'general')], 'all', 0, 1, '1', 5.0, 'g', None, {})"
         )  # noqa
 
     def test_eq(self):
@@ -32,6 +32,82 @@ class SearchQueryTestCase(SearxTestCase):
         s = SearchQuery('test', [EngineRef('bing', 'general')], 'all', 0, 1, None, None, None)
         t = copy(s)
         self.assertEqual(s, t)
+
+    def test_weight_overrides_eq_and_hash(self):
+        a = SearchQuery(
+            'q', [EngineRef('bing', 'general')], 'all', 0, 1, None, None, None,
+            weight_overrides={'bing': 2.0},
+        )
+        b = SearchQuery(
+            'q', [EngineRef('bing', 'general')], 'all', 0, 1, None, None, None,
+            weight_overrides={'bing': 2.0},
+        )
+        c = SearchQuery(
+            'q', [EngineRef('bing', 'general')], 'all', 0, 1, None, None, None,
+            weight_overrides={'bing': 0.5},
+        )
+        self.assertEqual(a, b)
+        self.assertEqual(hash(a), hash(b))
+        self.assertNotEqual(a, c)
+
+
+class ParseWeightOverridesTestCase(SearxTestCase):
+    """End-to-end coverage of weight_overrides flowing through the webadapter."""
+
+    def test_parse_basic(self):
+        from searx.webadapter import parse_weight_overrides
+        # 'dummy engine' is registered by the test settings fixture
+        result = parse_weight_overrides({'weight_overrides': 'dummy engine:2.5'})
+        self.assertEqual(result, {'dummy engine': 2.5})
+
+    def test_parse_zero_preserved(self):
+        from searx.webadapter import parse_weight_overrides
+        self.assertEqual(
+            parse_weight_overrides({'weight_overrides': 'dummy engine:0'}),
+            {'dummy engine': 0.0},
+        )
+
+    def test_parse_rejects_unknown_engine(self):
+        from searx.webadapter import parse_weight_overrides
+        self.assertEqual(
+            parse_weight_overrides({'weight_overrides': 'no_such_engine:2.0'}),
+            {},
+        )
+
+    def test_parse_rejects_negative_nan_inf(self):
+        from searx.webadapter import parse_weight_overrides
+        self.assertEqual(
+            parse_weight_overrides({'weight_overrides': 'dummy engine:-1'}), {}
+        )
+        self.assertEqual(
+            parse_weight_overrides({'weight_overrides': 'dummy engine:nan'}), {}
+        )
+        self.assertEqual(
+            parse_weight_overrides({'weight_overrides': 'dummy engine:inf'}), {}
+        )
+
+    def test_parse_clamps_positive(self):
+        from searx.webadapter import parse_weight_overrides, MIN_WEIGHT, MAX_WEIGHT
+        self.assertEqual(
+            parse_weight_overrides({'weight_overrides': 'dummy engine:1e-12'}),
+            {'dummy engine': MIN_WEIGHT},
+        )
+        self.assertEqual(
+            parse_weight_overrides({'weight_overrides': 'dummy engine:1e9'}),
+            {'dummy engine': MAX_WEIGHT},
+        )
+
+    def test_parse_oversized_input_rejected(self):
+        from searx.webadapter import parse_weight_overrides, MAX_WEIGHT_OVERRIDES_RAW_LEN
+        raw = 'a:1,' * (MAX_WEIGHT_OVERRIDES_RAW_LEN // 4 + 1)
+        self.assertEqual(
+            parse_weight_overrides({'weight_overrides': raw}), {}
+        )
+
+    def test_parse_empty(self):
+        from searx.webadapter import parse_weight_overrides
+        self.assertEqual(parse_weight_overrides({}), {})
+        self.assertEqual(parse_weight_overrides({'weight_overrides': ''}), {})
 
 
 class SearchTestCase(SearxTestCase):

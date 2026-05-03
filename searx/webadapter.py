@@ -2,6 +2,7 @@
 # pylint: disable=missing-module-docstring
 
 from collections import defaultdict
+import math
 from typing import Dict, List, Optional, Tuple
 from searx.exceptions import SearxParameterException
 from searx.webutils import VALID_LANGUAGE_CODE
@@ -218,6 +219,60 @@ def parse_engine_data(form):
     return engine_data
 
 
+MAX_WEIGHT_OVERRIDES = 200
+MIN_WEIGHT = 0.0001
+MAX_WEIGHT = 1000.0
+# Hard cap on raw input length: 200 entries × (max engine name + weight + 2
+# delimiters) ≈ 12 KB.  Prevents pathological allocations from a giant input
+# before the per-entry cap kicks in.
+MAX_WEIGHT_OVERRIDES_RAW_LEN = 16 * 1024
+
+
+def parse_weight_overrides(form: Dict[str, str]) -> Dict[str, float]:
+    """Parse per-request engine weight overrides from the ``weight_overrides`` form parameter.
+
+    Expected format: ``weight_overrides=google:2.5,duckduckgo:0.8``
+    Engines not listed fall back to their global YAML-configured weight.
+    A weight of 0 soft-disables an engine: the engine's contribution is
+    skipped in scoring and the result is only ranked by other contributing
+    engines.  If all engines for a result are soft-disabled, it scores 0
+    and sorts to the bottom.  Positive values are clamped to [0.0001, 1000].
+    NaN/Inf and negative values are rejected.
+    Engine names containing ``,`` or ``:`` are rejected because those are
+    the entry/field delimiters of the wire format.
+    At most 200 entries are accepted; extras are silently ignored.
+    Inputs longer than 16 KB are rejected outright.
+    """
+    raw = form.get('weight_overrides', '')
+    if not raw or len(raw) > MAX_WEIGHT_OVERRIDES_RAW_LEN:
+        return {}
+
+    overrides: Dict[str, float] = {}
+    for pair in map(str.strip, raw.split(',')):
+        if len(overrides) >= MAX_WEIGHT_OVERRIDES:
+            break
+        if ':' not in pair:
+            continue
+        engine_name, _, weight_str = pair.partition(':')
+        engine_name = engine_name.strip()
+        if not engine_name or ',' in engine_name or ':' in engine_name:
+            continue
+        if engine_name not in engines:
+            continue
+        try:
+            weight = float(weight_str)
+        except ValueError:
+            continue
+        if not math.isfinite(weight) or weight < 0:
+            continue
+        if weight == 0:
+            overrides[engine_name] = 0.0
+        else:
+            overrides[engine_name] = max(MIN_WEIGHT, min(MAX_WEIGHT, weight))
+
+    return overrides
+
+
 def get_search_query_from_webapp(
     preferences: Preferences, form: Dict[str, str]
 ) -> Tuple[SearchQuery, RawTextQuery, List[EngineRef], List[EngineRef], str]:
@@ -259,6 +314,7 @@ def get_search_query_from_webapp(
     external_bang = raw_text_query.external_bang
     redirect_to_first_result = raw_text_query.redirect_to_first_result
     engine_data = parse_engine_data(form)
+    weight_overrides = parse_weight_overrides(form)
 
     query_lang = parse_lang(preferences, form, raw_text_query)
     selected_locale = query_lang
@@ -292,6 +348,7 @@ def get_search_query_from_webapp(
             external_bang=external_bang,
             engine_data=engine_data,
             redirect_to_first_result=redirect_to_first_result,
+            weight_overrides=weight_overrides,
         ),
         raw_text_query,
         query_engineref_list_unknown,

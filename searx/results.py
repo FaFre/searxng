@@ -17,12 +17,36 @@ from searx.result_types.answer import AnswerSet, BaseAnswer
 def calculate_score(
     result: MainResult | LegacyResult,
     priority: MainResult.PriorityType,
+    weight_overrides: dict[str, float] | None = None,
 ) -> float:
+    # Per-engine weight calculation: if an engine is present in
+    # weight_overrides, its override replaces the YAML-configured weight.
+    # Engines not listed in weight_overrides fall back to their global
+    # weight.  A weight override of 0 soft-disables an engine: that
+    # engine's contribution is skipped entirely.  If ALL engines that
+    # found a result are soft-disabled, the result score is 0 (sorted to
+    # the bottom).  When a result is found by multiple engines, the
+    # weights of non-disabled contributing engines are multiplied
+    # together — soft-disabling one engine does not penalize the others.
     weight = 1.0
+    contributing = 0
 
     for result_engine in result['engines']:
-        if hasattr(searx.engines.engines.get(result_engine), 'weight'):
+        if weight_overrides and result_engine in weight_overrides:
+            override = weight_overrides[result_engine]
+            if override == 0:
+                continue
+            weight *= override
+            contributing += 1
+        elif hasattr(searx.engines.engines.get(result_engine), 'weight'):
             weight *= float(searx.engines.engines[result_engine].weight)
+            contributing += 1
+        else:
+            weight *= 1.0
+            contributing += 1
+
+    if contributing == 0:
+        return 0
 
     weight *= len(result['positions'])
     score = 0
@@ -62,7 +86,7 @@ class ResultContainer:
     answers: AnswerSet
     corrections: set[str]
 
-    def __init__(self):
+    def __init__(self, weight_overrides: dict[str, float] | None = None):
         self.main_results_map = {}
         self.infoboxes = []
         self.suggestions = set()
@@ -78,7 +102,8 @@ class ResultContainer:
         self.redirect_url: str | None = None
         self.on_result: t.Callable[[Result | LegacyResult], bool] = lambda _: True
         self._lock: RLock = RLock()
-        self._main_results_sorted: list[MainResult | LegacyResult] = None  # type: ignore
+        self._main_results_sorted: list[MainResult | LegacyResult] | None = None
+        self.weight_overrides: dict[str, float] = weight_overrides or {}
 
     def extend(
         self, engine_name: str | None, results: list[Result | LegacyResult]
@@ -165,7 +190,7 @@ class ResultContainer:
             with self._lock:
                 for existing_infobox in self.infoboxes:
                     if new_id == getattr(existing_infobox, "id", None):
-                        merge_two_infoboxes(existing_infobox, new_infobox)
+                        merge_two_infoboxes(existing_infobox, new_infobox, self.weight_overrides)
                         add_infobox = False
         if add_infobox:
             self.infoboxes.append(new_infobox)
@@ -190,7 +215,7 @@ class ResultContainer:
         self._closed = True
 
         for result in self.main_results_map.values():
-            result.score = calculate_score(result, result.priority)
+            result.score = calculate_score(result, result.priority, self.weight_overrides)
             for eng_name in result.engines:
                 counter_add(result.score, 'engine', eng_name, 'score')
 
@@ -294,11 +319,25 @@ class ResultContainer:
             return self.timings
 
 
-def merge_two_infoboxes(origin: LegacyResult, other: LegacyResult):
+def merge_two_infoboxes(
+    origin: LegacyResult, other: LegacyResult, weight_overrides: dict[str, float] | None = None
+):
     """Merges the values from ``other`` into ``origin``."""
     # pylint: disable=too-many-branches
-    weight1 = getattr(searx.engines.engines[origin.engine], "weight", 1)
-    weight2 = getattr(searx.engines.engines[other.engine], "weight", 1)
+    # A weight override of 0 soft-disables an engine for *scoring*, but
+    # for infobox merging we still need to pick which infobox wins.
+    # Treating 0 as 0 here would make ties "origin wins" arbitrarily and
+    # leak the soft-disable into a separate decision.  Fall back to the
+    # YAML weight so the admin's configured ranking still drives merges.
+    def _merge_weight(engine_name: str) -> float:
+        if weight_overrides and engine_name in weight_overrides:
+            override = weight_overrides[engine_name]
+            if override != 0:
+                return override
+        return float(getattr(searx.engines.engines[engine_name], "weight", 1))
+
+    weight1 = _merge_weight(origin.engine)
+    weight2 = _merge_weight(other.engine)
 
     if weight2 > weight1:
         origin.engine = other.engine

@@ -52,7 +52,9 @@ class Search:
         # init vars
         super().__init__()
         self.search_query: "SearchQuery" = search_query
-        self.result_container: ResultContainer = ResultContainer()
+        self.result_container: ResultContainer = ResultContainer(
+            weight_overrides=search_query.weight_overrides,
+        )
         self.start_time: float | None = None
         self.actual_timeout: float | None = None
 

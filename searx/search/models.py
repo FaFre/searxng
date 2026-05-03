@@ -40,6 +40,7 @@ class SearchQuery:
         external_bang: str | None = None,
         engine_data: dict[str, dict[str, str]] | None = None,
         redirect_to_first_result: bool | None = None,
+        weight_overrides: dict[str, float] | None = None,
     ):  # pylint:disable=too-many-arguments
         self.query = query
         self.engineref_list = engineref_list
@@ -51,6 +52,7 @@ class SearchQuery:
         self.external_bang = external_bang
         self.engine_data = engine_data or {}
         self.redirect_to_first_result = redirect_to_first_result
+        self.weight_overrides = weight_overrides or {}
 
         self.locale = None
         if self.lang:
@@ -64,7 +66,7 @@ class SearchQuery:
         return list(set(map(lambda engineref: engineref.category, self.engineref_list)))
 
     def __repr__(self):
-        return "SearchQuery({!r}, {!r}, {!r}, {!r}, {!r}, {!r}, {!r}, {!r}, {!r})".format(
+        return "SearchQuery({!r}, {!r}, {!r}, {!r}, {!r}, {!r}, {!r}, {!r}, {!r}, {!r})".format(
             self.query,
             self.engineref_list,
             self.lang,
@@ -74,6 +76,7 @@ class SearchQuery:
             self.timeout_limit,
             self.external_bang,
             self.redirect_to_first_result,
+            self.weight_overrides,
         )
 
     def __eq__(self, other):
@@ -87,6 +90,7 @@ class SearchQuery:
             and self.timeout_limit == other.timeout_limit
             and self.external_bang == other.external_bang
             and self.redirect_to_first_result == other.redirect_to_first_result
+            and self.weight_overrides == other.weight_overrides
         )
 
     def __hash__(self):
@@ -101,6 +105,7 @@ class SearchQuery:
                 self.timeout_limit,
                 self.external_bang,
                 self.redirect_to_first_result,
+                tuple(sorted(self.weight_overrides.items())),
             )
         )
 
@@ -116,4 +121,5 @@ class SearchQuery:
             self.external_bang,
             self.engine_data,
             self.redirect_to_first_result,
+            self.weight_overrides,
         )
