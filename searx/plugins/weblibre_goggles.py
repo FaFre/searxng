@@ -49,7 +49,10 @@ _FILENAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}\.goggle$")
 _NAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
 
 MAX_LINE_LEN = 200
-MAX_RULES = 1000
+# Uncapped: `$site=`-only rules are hashed (see Goggle.host_index) so
+# per-result match cost is O(1) regardless of rule count.  Patterned
+# rules scan linearly — keep those few and this limit need not apply.
+MAX_RULES = 0
 MAX_WILDCARDS = 2
 MAX_DELIMS = 2
 MAX_GOGGLES = 256
@@ -90,7 +93,14 @@ class Rule:
 
 
 class Goggle:
-    __slots__ = ("name", "description", "rules", "default_discard")
+    __slots__ = (
+        "name",
+        "description",
+        "rules",
+        "default_discard",
+        "host_index",
+        "pattern_rules",
+    )
 
     def __init__(
         self,
@@ -103,6 +113,20 @@ class Goggle:
         self.description = description
         self.rules = rules
         self.default_discard = default_discard
+        # Fast path for `$site=`-only rules (no regex pattern): index by
+        # site value so per-result lookup walks the host's parent domains
+        # in O(host_depth) instead of scanning every rule. This is what
+        # lets us carry 35k+ entries (e.g. Kagi smallweb) without paying
+        # a linear scan per result.
+        host_index: dict[str, list[Rule]] = {}
+        pattern_rules: list[Rule] = []
+        for r in rules:
+            if r.site is not None and r.regex is None:
+                host_index.setdefault(r.site, []).append(r)
+            else:
+                pattern_rules.append(r)
+        self.host_index = host_index
+        self.pattern_rules = pattern_rules
 
 
 def _compile_pattern(pat: str) -> re.Pattern:
@@ -244,7 +268,7 @@ def parse_goggle(name: str, text: str) -> Goggle:
             continue
         assert isinstance(parsed, Rule)
         rules.append(parsed)
-        if len(rules) > MAX_RULES:
+        if MAX_RULES > 0 and len(rules) > MAX_RULES:
             raise GoggleParseError(f"too many rules (> {MAX_RULES})")
 
     return Goggle(
@@ -380,27 +404,52 @@ class SXNGPlugin(Plugin):
 
         url = result.url or ""
         host = (result.parsed_url.netloc or "").lower()
+        # Strip the optional :port so dict lookups against `$site=` rules
+        # (which are bare hostnames) hit consistently.
+        if ":" in host:
+            host = host.split(":", 1)[0]
+        host_parents = []
+        if host:
+            parts = host.split(".")
+            for i in range(len(parts)):
+                host_parents.append(".".join(parts[i:]))
 
         best_action: str | None = None
         best_strength = 0
         any_default_discard = False
+
+        def _consider(action: str, strength: int) -> None:
+            nonlocal best_action, best_strength
+            if best_action is None or _ACTION_RANK[action] > _ACTION_RANK[best_action]:
+                best_action = action
+                best_strength = strength
+            elif action == best_action and strength > best_strength:
+                best_strength = strength
+
         for goggle in goggles:
             if goggle.default_discard:
                 any_default_discard = True
-            for rule in goggle.rules:
-                # Discard always wins; once seen we can stop the scan
-                # because no later rule can change the outcome.
+
+            # Fast path: hostname-keyed rules (no regex pattern).
+            for candidate in host_parents:
+                rules = goggle.host_index.get(candidate)
+                if not rules:
+                    continue
+                for rule in rules:
+                    _consider(rule.action, rule.strength)
                 if best_action == "discard":
                     break
-                if not rule.matches(url, host):
-                    continue
-                if best_action is None or _ACTION_RANK[rule.action] > _ACTION_RANK[
-                    best_action
-                ]:
-                    best_action = rule.action
-                    best_strength = rule.strength
-                elif rule.action == best_action and rule.strength > best_strength:
-                    best_strength = rule.strength
+
+            # Slow path: rules with patterns. These are scanned linearly,
+            # but in practice they're a tiny fraction of total rules.
+            if best_action != "discard":
+                for rule in goggle.pattern_rules:
+                    if not rule.matches(url, host):
+                        continue
+                    _consider(rule.action, rule.strength)
+                    if best_action == "discard":
+                        break
+
             if best_action == "discard":
                 break
 
