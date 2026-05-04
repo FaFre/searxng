@@ -107,19 +107,64 @@ family_friendly_only: bool = False
 base_url = "https://api.search.brave.com/res/v1/web/search"
 """Base URL for the Brave Search API."""
 
+# Public OpenAPI-style spec endpoint used by the API dashboard. We fetch this
+# at engine startup to learn the *currently* allowed values for the enum
+# parameters (``country``, ``search_lang``, ``ui_lang``, ``safesearch``) and
+# the numeric bounds for ``count``/``offset``. Brave occasionally adds new
+# locales; pulling the live spec keeps us aligned without code changes.
+_SPEC_URL = "https://api-dashboard.search.brave.com/api-reference/spec?path=/v1/web/search&method=get"
+
 # Brave's `freshness` parameter values, see:
 # https://api-dashboard.search.brave.com/app/documentation/web-search/query
 time_range_map = {"day": "pd", "week": "pw", "month": "pm", "year": "py"}
 
-# Brave caps `offset` at 9 (zero-indexed page number)
-_MAX_PAGE = 10
+# Hard-coded fallbacks: snapshot of the spec's enum/bounds as of 2026-05-04.
+# Used only when the live spec fetch fails at startup so the engine still
+# rejects values Brave is known not to support.
+_FALLBACK_COUNTRIES: frozenset[str] = frozenset(
+    "AR AU AT BE BR CA CL DK FI FR DE GR HK IN ID IT JP KR MY MX NL NZ NO CN "
+    "PL PT PH RU SA ZA ES SE CH TW TR GB US ALL".split()
+)
+_FALLBACK_SEARCH_LANGS: frozenset[str] = frozenset(
+    "ar eu bn bg ca zh-hans zh-hant hr cs da nl en en-gb et fi fr gl de el gu "
+    "he hi hu is it jp kn ko lv lt ms ml mr nb pl pt-br pt-pt pa ro ru sr sk "
+    "sl es sv ta te th tr uk vi".split()
+)
+_FALLBACK_UI_LANGS: frozenset[str] = frozenset(
+    "es-AR en-AU de-AT nl-BE fr-BE pt-BR en-CA fr-CA es-CL da-DK fi-FI fr-FR "
+    "de-DE el-GR zh-HK en-IN en-ID it-IT ja-JP ko-KR en-MY es-MX nl-NL en-NZ "
+    "no-NO zh-CN pl-PL en-PH ru-RU en-ZA es-ES sv-SE fr-CH de-CH zh-TW tr-TR "
+    "en-GB en-US es-US".split()
+)
+_FALLBACK_SAFESEARCH: frozenset[str] = frozenset(("off", "moderate", "strict"))
+
+# Live values, replaced from the API spec at startup; otherwise the fallbacks.
+_ALLOWED_COUNTRIES: frozenset[str] = _FALLBACK_COUNTRIES
+_ALLOWED_SEARCH_LANGS: frozenset[str] = _FALLBACK_SEARCH_LANGS
+_ALLOWED_UI_LANGS: frozenset[str] = _FALLBACK_UI_LANGS
+_ALLOWED_SAFESEARCH: frozenset[str] = _FALLBACK_SAFESEARCH
+
+# Numeric bounds learned from the spec. Brave caps ``count`` at 20 and
+# ``offset`` at 9 (zero-indexed page number, so up to 10 pages of paging).
+_COUNT_MIN: int = 1
+_COUNT_MAX: int = 20
+_OFFSET_MAX: int = 9
+_MAX_PAGE: int = _OFFSET_MAX + 1
+_QUERY_MAX_LEN: int = 400
+
+# SearXNG language tags don't align 1:1 with Brave's ``search_lang`` enum:
+# Brave uses Norwegian Bokmål (``nb``) over the macrolanguage ``no``, ``jp``
+# (not ``ja``) for Japanese, and ``zh-hans``/``zh-hant`` for Chinese script
+# variants. This map applies before the enum membership check.
+_SEARCH_LANG_REMAP: dict[str, str] = {
+    "ja": "jp",
+    "no": "nb",
+    "nn": "nb",  # Nynorsk → Bokmål (no separate Nynorsk option in spec)
+    "iw": "he",
+    "in": "id",  # historical aliases
+}
 
 # `_VALID_SEARCH_TYPES` is defined below alongside `_DISPATCH`.
-#
-# Brave's documented `country` codes are upper-case ISO 3166-1 alpha-2 (or
-# ``ALL``). ``search_lang`` and ``ui_lang`` are best-effort: SearXNG's locale
-# tags don't align 1:1 with Brave's settings page values, so we route the
-# scraped UI-language list through the engine's traits like ``brave.py`` does.
 
 
 def init(_):
@@ -130,15 +175,140 @@ def init(_):
         raise SearxEngineAPIException(
             f"Invalid search_type {search_type!r}; expected one of {sorted(_VALID_SEARCH_TYPES)}"
         )
+    _load_spec()
+
+
+def _load_spec() -> None:
+    """Fetch the Brave API reference spec and extract enum/numeric bounds.
+
+    The dashboard exposes the same JSON shape used to render the API docs.
+    Failures fall back to the hardcoded snapshot above — the engine remains
+    functional but stops auto-tracking spec changes until the next startup.
+    """
+    # pylint: disable=global-statement,import-outside-toplevel
+    global _ALLOWED_COUNTRIES, _ALLOWED_SEARCH_LANGS, _ALLOWED_UI_LANGS
+    global _ALLOWED_SAFESEARCH, _COUNT_MIN, _COUNT_MAX, _OFFSET_MAX, _MAX_PAGE, _QUERY_MAX_LEN
+
+    try:
+        from searx.network import get as _get
+
+        resp = _get(_SPEC_URL, timeout=5)
+        if not resp.ok:
+            raise RuntimeError(f"HTTP {resp.status_code}")
+        spec = resp.json()
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("braveapi: failed to load spec from %s (%s); using static fallback", _SPEC_URL, exc)
+        return
+
+    by_name = {p.get("name"): p for p in spec.get("params") or [] if isinstance(p, dict)}
+
+    def _enum(param_name: str) -> frozenset[str] | None:
+        param = by_name.get(param_name) or {}
+        ptype = param.get("type") or {}
+        if ptype.get("kind") != "enum":
+            return None
+        opts = ptype.get("options") or []
+        if not opts:
+            return None
+        return frozenset(str(o) for o in opts if o)
+
+    countries = _enum("country")
+    if countries:
+        _ALLOWED_COUNTRIES = countries
+    search_langs = _enum("search_lang")
+    if search_langs:
+        _ALLOWED_SEARCH_LANGS = search_langs
+    ui_langs = _enum("ui_lang")
+    if ui_langs:
+        _ALLOWED_UI_LANGS = ui_langs
+    safesearch_opts = _enum("safesearch")
+    if safesearch_opts:
+        _ALLOWED_SAFESEARCH = safesearch_opts
+
+    count_type = (by_name.get("count") or {}).get("type") or {}
+    if count_type.get("kind") == "integer":
+        _COUNT_MIN = int(count_type.get("minimum", _COUNT_MIN))
+        _COUNT_MAX = int(count_type.get("maximum", _COUNT_MAX))
+    offset_type = (by_name.get("offset") or {}).get("type") or {}
+    if offset_type.get("kind") == "integer":
+        _OFFSET_MAX = int(offset_type.get("maximum", _OFFSET_MAX))
+        _MAX_PAGE = _OFFSET_MAX + 1
+    q_type = (by_name.get("q") or {}).get("type") or {}
+    if q_type.get("kind") == "string" and q_type.get("maxLength"):
+        _QUERY_MAX_LEN = int(q_type["maxLength"])
+
+    logger.debug(
+        "braveapi: spec loaded — %d countries, %d search_langs, %d ui_langs, count<=%d, offset<=%d",
+        len(_ALLOWED_COUNTRIES),
+        len(_ALLOWED_SEARCH_LANGS),
+        len(_ALLOWED_UI_LANGS),
+        _COUNT_MAX,
+        _OFFSET_MAX,
+    )
+
+
+def _normalize_search_lang(lang: str, region: str) -> str:
+    """Pick the best ``search_lang`` value from Brave's enum.
+
+    Tries region-qualified variants first (``en-gb``, ``pt-br``, ``zh-hans``)
+    and falls back to the bare language. Returns ``""`` if nothing matches —
+    the caller drops the parameter, letting Brave use its default (``en``).
+    """
+    if not lang:
+        return ""
+    lang = lang.lower()
+    region_l = (region or "").lower()
+    candidates: list[str] = []
+    if lang == "zh":
+        # Chinese script variants are encoded as ``zh-hans``/``zh-hant``.
+        if region in ("TW", "HK", "MO"):
+            candidates.append("zh-hant")
+        else:
+            candidates.append("zh-hans")
+    if region_l:
+        candidates.append(f"{lang}-{region_l}")
+    candidates.append(_SEARCH_LANG_REMAP.get(lang, lang))
+    for c in candidates:
+        if c in _ALLOWED_SEARCH_LANGS:
+            return c
+    return ""
+
+
+def _normalize_ui_lang(ui_lang: str) -> str:
+    """Validate ``ui_lang`` against Brave's enum (BCP-47, ``lang-REGION``).
+
+    The enum is small (39 entries) and skips many plausible combinations
+    (e.g. ``de-CA``). Returns ``""`` for anything not in the spec so we
+    don't ship requests Brave will reject with 422.
+    """
+    if not ui_lang:
+        return ""
+    parts = ui_lang.replace("_", "-").split("-")
+    parts[0] = parts[0].lower()
+    for i in range(1, len(parts)):
+        if len(parts[i]) == 2 and parts[i].isalpha():
+            parts[i] = parts[i].upper()
+    candidate = "-".join(parts)
+    return candidate if candidate in _ALLOWED_UI_LANGS else ""
+
+
+def _normalize_country(region: str) -> str:
+    """Validate the country code; return ``""`` if Brave doesn't support it."""
+    if not region:
+        return ""
+    region = region.upper()
+    return region if region in _ALLOWED_COUNTRIES else ""
 
 
 def _build_locale(searxng_locale: str) -> dict[str, str]:
     """Map a SearXNG locale tag to Brave query parameters.
 
-    Prefers values from the engine's :py:obj:`EngineTraits` (populated by
-    :py:func:`fetch_traits`); falls back to a structural parse of the tag
-    when traits are unavailable. Brave expects ``country`` as upper-case
-    ISO 3166-1 alpha-2 and ``ui_lang`` in BCP-47 form (``en-US``).
+    Every value is validated against the spec's enum (loaded at startup by
+    :py:func:`_load_spec`); unsupported codes are dropped rather than sent,
+    which makes Brave reject the whole request with HTTP 422. We prefer
+    values from :py:obj:`EngineTraits` (populated by :py:func:`fetch_traits`
+    from Brave's settings page) and fall back to a structural parse of the
+    SearXNG tag.
     """
     args: dict[str, str] = {}
     if not searxng_locale or searxng_locale == "all":
@@ -160,17 +330,8 @@ def _build_locale(searxng_locale: str) -> dict[str, str]:
     except (NameError, AttributeError):
         pass
 
-    if ui_lang:
-        ui_lang_parts = ui_lang.split("-")
-        ui_lang_parts[0] = ui_lang_parts[0].lower()
-        for i in range(1, len(ui_lang_parts)):
-            if len(ui_lang_parts[i]) == 2 and ui_lang_parts[i].isalpha():
-                ui_lang_parts[i] = ui_lang_parts[i].upper()
-        ui_lang = "-".join(ui_lang_parts)
-
     parts = searxng_locale.replace("_", "-").split("-")
     lang = parts[0].lower()
-    args["search_lang"] = lang
 
     if not region:
         # Pick the last 2-letter segment as the region (skip script subtags
@@ -179,13 +340,17 @@ def _build_locale(searxng_locale: str) -> dict[str, str]:
         if candidate:
             region = candidate.upper()
 
-    if region:
-        args["country"] = region
-        if not ui_lang:
-            # Brave's API expects ``ui_lang`` like ``en-US`` (lower-language,
-            # upper-region), matching IETF BCP 47 casing.
-            ui_lang = f"{lang}-{region}"
+    country = _normalize_country(region)
+    if country:
+        args["country"] = country
 
+    search_lang = _normalize_search_lang(lang, region)
+    if search_lang:
+        args["search_lang"] = search_lang
+
+    if not ui_lang and region:
+        ui_lang = f"{lang}-{region}"
+    ui_lang = _normalize_ui_lang(ui_lang)
     if ui_lang:
         args["ui_lang"] = ui_lang
 
@@ -194,11 +359,20 @@ def _build_locale(searxng_locale: str) -> dict[str, str]:
 
 def request(query: str, params: "OnlineParams") -> None:
     """Create the API request."""
-    pageno = min(params["pageno"], _MAX_PAGE)
+    # Brave caps offsets at ``_OFFSET_MAX`` (zero-indexed page); pages beyond
+    # that get clamped to the last available page rather than 422'd.
+    pageno = max(1, min(params["pageno"], _MAX_PAGE))
+    count = max(_COUNT_MIN, min(int(results_per_page), _COUNT_MAX))
+
+    # Brave rejects queries longer than ``_QUERY_MAX_LEN`` characters; trim
+    # rather than fail. We don't enforce the 50-word limit (rare and cheap
+    # to surface as a server-side error if it ever bites).
+    if len(query) > _QUERY_MAX_LEN:
+        query = query[:_QUERY_MAX_LEN]
 
     search_args: dict[str, str | int] = {
         "q": query,
-        "count": results_per_page,
+        "count": count,
         "offset": pageno - 1,
         # Strip Brave's ``<strong>`` highlight markers — SearXNG templates
         # render the title/description as plain text and would otherwise
@@ -213,11 +387,13 @@ def request(query: str, params: "OnlineParams") -> None:
 
     safesearch_value = params["safesearch"]
     if safesearch_value == 2:
-        search_args["safesearch"] = "strict"
+        ss = "strict"
     elif safesearch_value == 1:
-        search_args["safesearch"] = "moderate"
+        ss = "moderate"
     else:
-        search_args["safesearch"] = "off"
+        ss = "off"
+    if ss in _ALLOWED_SAFESEARCH:
+        search_args["safesearch"] = ss
 
     search_args.update(_build_locale(params.get("searxng_locale") or params.get("language") or ""))
 
