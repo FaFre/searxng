@@ -66,7 +66,7 @@ paging = True
 safesearch = True
 time_range_support = False
 
-results_per_page: int = 20
+results_per_page: int = 100
 """Maximum number of results per page (Marginalia ``count``, 1-100)."""
 
 domain_count: int = 2
