@@ -150,7 +150,15 @@ confidence_min: int = 0
 ``cfs`` confidence score (0..5) is below this threshold. 0 disables the
 extra check; values >0 are stricter (Mojeek's default ``cfs`` is 5)."""
 
-_DOMAIN_LIST_MAX = 25
+# Spec bounds — see https://www.mojeek.com/support/api/search/request_parameters.html
+# Mojeek doesn't publish a machine-readable spec, so these are tracked manually.
+# The HTML page is parsed by ``mojeek.fetch_traits`` for language/region codes;
+# numeric bounds are validated locally instead.
+_DOMAIN_LIST_MAX = 25  # ``fi``/``fe`` accept up to 25 domains each.
+_BOOST_MIN, _BOOST_MAX = 1, 100  # ``lbb``/``rbb`` documented range (0 disables).
+_TLEN_MAX = 127  # ``tlen`` (title length) upper bound.
+_DLEN_MAX = 511  # ``dlen`` (snippet length) upper bound.
+_CLUFMT_MAX = 5  # ``clufmt`` accepts 0..5 (0 = legacy clustering, 1-5 enables new).
 
 # Mojeek's recommended low-quality thresholds (see results_scoring.html).
 _ONSCR_MIN = 0.15
@@ -160,15 +168,42 @@ base_url = "https://api.mojeek.com/search"
 """Base URL for the Mojeek Search API."""
 
 # Mojeek's ``since`` parameter accepts ``day``, ``month`` and ``year`` directly;
-# ``week`` is expressed as a YYYYMMDD lower bound.
+# ``week`` is expressed as a YYYYMMDD lower bound. ``before`` accepts the same
+# tokens or a YYYYMMDD upper bound.
 _native_since = {"day": "day", "month": "month", "year": "year"}
 _week_delta = {"week": timedelta(days=7)}
 
 
+def _clamp(value: int, lo: int, hi: int) -> int:
+    """Clamp *value* to ``[lo, hi]``."""
+    return max(lo, min(int(value), hi))
+
+
 def init(_):
-    """Initialize the engine."""
+    """Initialize the engine and validate config-supplied bounds."""
+    # pylint: disable=global-statement
+    global language_boost, region_boost, title_length, snippet_length
+    global cluster_format, cluster_results, results_per_page
+
     if not api_key:
         raise SearxEngineAPIException("No API key provided")
+
+    # Clamp user-supplied settings to spec ranges so a misconfigured YAML
+    # doesn't cause the API to silently ignore the parameter or return 4xx.
+    if language_boost:
+        language_boost = _clamp(language_boost, _BOOST_MIN, _BOOST_MAX)
+    if region_boost:
+        region_boost = _clamp(region_boost, _BOOST_MIN, _BOOST_MAX)
+    if title_length:
+        title_length = _clamp(title_length, 0, _TLEN_MAX)
+    if snippet_length:
+        snippet_length = _clamp(snippet_length, 0, _DLEN_MAX)
+    if cluster_format:
+        cluster_format = _clamp(cluster_format, 0, _CLUFMT_MAX)
+    if cluster_results < 0:
+        cluster_results = 0
+    if results_per_page < 1:
+        results_per_page = 1
 
 
 def request(query: str, params: "OnlineParams") -> None:
