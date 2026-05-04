@@ -219,10 +219,41 @@ def request(query: str, params: "OnlineParams") -> None:
     if result_filter:
         search_args["result_filter"] = result_filter
 
-    if goggles:
-        search_args["goggles"] = goggles
+    # Per-query goggles from the weblibre_goggles plugin replace the static
+    # `goggles:` engine config when present. The plugin only hands off
+    # goggles that have a `<name>.goggle.hosted` sibling (a public URL
+    # Brave can fetch); goggles without one are applied locally instead
+    # because they're too large to ship inline. We emit one repeated
+    # `goggles=` parameter per hosted URL, in selection order — Brave
+    # ANDs multiple goggles together.
+    goggle_payloads: list[str] = []
+    engine_data = params.get("engine_data") or {}
+    selected = (engine_data.get("weblibre_goggles") or "").strip()
+    if selected:
+        try:
+            from searx.plugins.weblibre_goggles import get_goggle  # local import: optional dep
+        except ImportError:
+            get_goggle = None  # type: ignore[assignment]
+        if get_goggle is not None:
+            for name in selected.split(","):
+                name = name.strip()
+                if not name:
+                    continue
+                g = get_goggle(name)
+                if g is None or not g.hosted_url:
+                    continue
+                goggle_payloads.append(g.hosted_url)
 
-    params["url"] = f"{base_url}?{urlencode(search_args)}"
+    if not goggle_payloads and goggles:
+        goggle_payloads = [goggles]
+
+    if goggle_payloads:
+        # `urlencode(..., doseq=True)` emits repeated `goggles=` params.
+        search_args_list = list(search_args.items())
+        search_args_list.extend(("goggles", p) for p in goggle_payloads)
+        params["url"] = f"{base_url}?{urlencode(search_args_list, doseq=True)}"
+    else:
+        params["url"] = f"{base_url}?{urlencode(search_args)}"
     params["headers"]["X-Subscription-Token"] = api_key
     params["headers"]["Accept"] = "application/json"
     params["headers"]["Accept-Encoding"] = "gzip"

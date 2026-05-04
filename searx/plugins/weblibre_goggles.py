@@ -100,6 +100,7 @@ class Goggle:
         "default_discard",
         "host_index",
         "pattern_rules",
+        "hosted_url",
     )
 
     def __init__(
@@ -108,11 +109,13 @@ class Goggle:
         description: str,
         rules: list[Rule],
         default_discard: bool,
+        hosted_url: str | None = None,
     ) -> None:
         self.name = name
         self.description = description
         self.rules = rules
         self.default_discard = default_discard
+        self.hosted_url = hosted_url
         # Fast path for `$site=`-only rules (no regex pattern): index by
         # site value so per-result lookup walks the host's parent domains
         # in O(host_depth) instead of scanning every rule. This is what
@@ -279,6 +282,26 @@ def parse_goggle(name: str, text: str) -> Goggle:
     )
 
 
+_HOSTED_URL_RE = re.compile(r"^https?://[^\s]+$")
+
+
+def _read_hosted_sibling(path: str) -> str | None:
+    try:
+        with open(path, "r", encoding="utf-8") as fp:
+            text = fp.read()
+    except OSError:
+        return None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("!"):
+            continue
+        if not _HOSTED_URL_RE.match(line):
+            log.warning("weblibre_goggles: invalid hosted URL in %s: %r", path, line)
+            return None
+        return line
+    return None
+
+
 def _load_directory(path: str) -> dict[str, Goggle]:
     registry: dict[str, Goggle] = {}
     if not path or not os.path.isdir(path):
@@ -305,12 +328,30 @@ def _load_directory(path: str) -> dict[str, Goggle]:
         try:
             with open(full, "r", encoding="utf-8") as fp:
                 text = fp.read()
-            registry[key] = parse_goggle(key, text)
+            goggle = parse_goggle(key, text)
         except (OSError, GoggleParseError) as exc:
             log.warning("weblibre_goggles: skipping %s: %s", fname, exc)
             continue
+        hosted = _read_hosted_sibling(full + ".hosted")
+        if hosted:
+            goggle.hosted_url = hosted
+            log.info("weblibre_goggles: %s has hosted URL %s", key, hosted)
+        registry[key] = goggle
 
     return registry
+
+
+# Module-level pointer to the active plugin instance, set during init().
+# Lets the braveapi engine resolve goggle names → payloads (hosted URL or
+# inline text) without importing the plugin singleton via Flask state.
+_PLUGIN_INSTANCE: "SXNGPlugin | None" = None
+
+
+def get_goggle(name: str) -> "Goggle | None":
+    """Look up a loaded goggle by registry key. Used by braveapi engine."""
+    if _PLUGIN_INSTANCE is None:
+        return None
+    return _PLUGIN_INSTANCE.registry.get(name)
 
 
 class SXNGPlugin(Plugin):
@@ -349,6 +390,8 @@ class SXNGPlugin(Plugin):
             directory,
             ", ".join(sorted(self.registry.keys())),
         )
+        global _PLUGIN_INSTANCE  # pylint: disable=global-statement
+        _PLUGIN_INSTANCE = self
         return True
 
     def pre_search(
@@ -373,6 +416,7 @@ class SXNGPlugin(Plugin):
             names = names[:MAX_GOGGLES_PER_REQUEST]
 
         resolved: list[Goggle] = []
+        resolved_names: list[str] = []
         seen: set[str] = set()
         for name in names:
             if not _NAME_RE.match(name):
@@ -385,7 +429,32 @@ class SXNGPlugin(Plugin):
                 log.debug("weblibre_goggles: unknown goggle %r", name)
                 continue
             resolved.append(goggle)
+            resolved_names.append(name)
             seen.add(name)
+
+        if resolved:
+            log.debug(
+                "weblibre_goggles: resolved goggles for query: %s",
+                [g.name for g in resolved],
+            )
+            # Goggles with a `<name>.goggle.hosted` sibling are handed off
+            # to Brave via engine_data; the remainder are too large to ship
+            # (no public URL available) and must still be applied locally
+            # against braveapi results.
+            hosted_names = [
+                name
+                for name, g in zip(resolved_names, resolved)
+                if g.hosted_url
+            ]
+            if hosted_names:
+                try:
+                    search.search_query.engine_data.setdefault("braveapi", {})[
+                        "weblibre_goggles"
+                    ] = ",".join(hosted_names)
+                except (AttributeError, TypeError) as exc:
+                    log.debug(
+                        "weblibre_goggles: could not write engine_data: %s", exc
+                    )
 
         setattr(search, "weblibre_goggles", resolved)
         return True
@@ -399,6 +468,14 @@ class SXNGPlugin(Plugin):
         goggles: list[Goggle] = getattr(search, "weblibre_goggles", []) or []
         if not goggles:
             return True
+        # For braveapi results, drop goggles already handed off to Brave
+        # (those with a `.hosted` URL) — re-running them locally would
+        # double-rank. Goggles too large to host stay in the list and are
+        # applied locally as before.
+        if getattr(result, "engine", "") == "braveapi":
+            goggles = [g for g in goggles if not g.hosted_url]
+            if not goggles:
+                return True
         if not result.parsed_url:
             return True
 
@@ -454,14 +531,18 @@ class SXNGPlugin(Plugin):
                 break
 
         if best_action is None and any_default_discard:
+            log.debug("weblibre_goggles: default-discard %s", url)
             return False
         if best_action == "discard":
+            log.debug("weblibre_goggles: discard %s", url)
             return False
 
         if isinstance(result, (MainResult, LegacyResult)):
             if best_action == "boost":
+                log.debug("weblibre_goggles: boost %s (strength=%d)", url, best_strength)
                 result.priority = "high"
             elif best_action == "downrank":
+                log.debug("weblibre_goggles: downrank %s (strength=%d)", url, best_strength)
                 result.priority = "low"
 
         return True
