@@ -89,8 +89,8 @@ paging = True
 safesearch = True
 time_range_support = True
 
-results_per_page: int = 10
-"""Maximum number of results per page (Mojeek default is 10)."""
+results_per_page: int = 40
+"""Maximum number of results per page (configured to 40 for WebLibre)."""
 
 language_boost: int = 100
 """Strength of the language-relevance boost (``lbb``); Mojeek recommends 100."""
