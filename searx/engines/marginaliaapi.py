@@ -84,10 +84,13 @@ custom_filter: str = ""
 """Optional server-side filter name (Marginalia ``filter``). Filters are
 created via the v2 ``/filter`` endpoints; leave empty for no filter."""
 
+_ALLOWED_LANGS: frozenset[str] = frozenset({"sv", "en", "fr", "de"})
+"""Languages the Marginalia API accepts for the ``lang`` parameter."""
+
 default_lang: str = "en"
 """Default ISO-639-1 language hint sent as ``lang`` when SearXNG's locale
-selection is ``all`` or otherwise unresolvable. The API itself defaults to
-``en`` server-side."""
+selection is ``all`` or otherwise unresolvable. Must be one of
+:py:obj:`_ALLOWED_LANGS`. The API itself defaults to ``en`` server-side."""
 
 base_url = "https://api2.marginalia-search.com"
 """Base URL for the Marginalia Search API (v2)."""
@@ -97,6 +100,10 @@ def init(_):
     """Initialize the engine."""
     if not api_key:
         raise SearxEngineAPIException("No API key provided")
+    if default_lang not in _ALLOWED_LANGS:
+        raise SearxEngineAPIException(
+            f"Invalid default_lang {default_lang!r}; expected one of {sorted(_ALLOWED_LANGS)}"
+        )
 
 
 def _resolve_lang(searxng_locale: str | None) -> str:
@@ -104,12 +111,13 @@ def _resolve_lang(searxng_locale: str | None) -> str:
 
     Marginalia's ``lang`` parameter is a single language code (no region),
     so we strip script/region subtags. Falls back to the configured
-    :py:obj:`default_lang` when the locale is empty, ``all`` or non-alphabetic.
+    :py:obj:`default_lang` when the locale is empty, ``all`` or resolves to
+    a language not in :py:obj:`_ALLOWED_LANGS`.
     """
     if not searxng_locale or searxng_locale == "all":
         return default_lang
     head = searxng_locale.replace("_", "-").split("-", 1)[0].lower()
-    if len(head) == 2 and head.isalpha():
+    if len(head) == 2 and head.isalpha() and head in _ALLOWED_LANGS:
         return head
     return default_lang
 
