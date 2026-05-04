@@ -64,10 +64,23 @@ class TestMarginaliaApiEngine(SearxTestCase):
         marginaliaapi.request("q", params)
         self.assertIn("lang=de", params["url"])
 
-    def test_request_locale_strips_script_subtag(self):
+    def test_request_locale_strips_script_subtag_to_allowed(self):
+        # zh-Hans-CN → head=zh, but zh is not in _ALLOWED_LANGS, so falls back
         params = _params(searxng_locale="zh-Hans-CN")
         marginaliaapi.request("q", params)
-        self.assertIn("lang=zh", params["url"])
+        self.assertIn("lang=en", params["url"])
+
+    def test_request_locale_unsupported_lang_falls_back(self):
+        # ja-JP → head=ja, not in _ALLOWED_LANGS, falls back to default_lang
+        params = _params(searxng_locale="ja-JP")
+        marginaliaapi.request("q", params)
+        self.assertIn("lang=en", params["url"])
+
+    def test_request_locale_allowed_lang(self):
+        for locale, expected in (("sv-SE", "sv"), ("fr-FR", "fr"), ("de-DE", "de"), ("en-US", "en")):
+            params = _params(searxng_locale=locale)
+            marginaliaapi.request("q", params)
+            self.assertIn(f"lang={expected}", params["url"])
 
     def test_request_locale_all_falls_back_to_default(self):
         marginaliaapi.default_lang = "fr"
@@ -92,6 +105,17 @@ class TestMarginaliaApiEngine(SearxTestCase):
         marginaliaapi.api_key = ""
         with self.assertRaises(SearxEngineAPIException):
             marginaliaapi.init({})
+
+    def test_init_rejects_invalid_default_lang(self):
+        marginaliaapi.api_key = "TEST-KEY"
+        marginaliaapi.default_lang = "ja"
+        with self.assertRaises(SearxEngineAPIException):
+            marginaliaapi.init({})
+
+    def test_init_accepts_valid_default_lang(self):
+        marginaliaapi.api_key = "TEST-KEY"
+        marginaliaapi.default_lang = "sv"
+        marginaliaapi.init({})
 
     # ---- response() ----
 
@@ -128,7 +152,7 @@ class TestMarginaliaApiEngine(SearxTestCase):
         self.assertEqual(r["content"], "Plan 9 from Bell Labs.")
         self.assertIn("HTML", r["metadata"])
         self.assertIn("quality: 4.47", r["metadata"])
-        self.assertIn("13 from domain", r["metadata"])
+        self.assertIn("results_from_domain: 13", r["metadata"])
 
     def test_response_skips_results_without_url_or_title(self):
         payload = {
