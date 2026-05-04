@@ -160,6 +160,14 @@ def _build_locale(searxng_locale: str) -> dict[str, str]:
     except (NameError, AttributeError):
         pass
 
+    if ui_lang:
+        ui_lang_parts = ui_lang.split("-")
+        ui_lang_parts[0] = ui_lang_parts[0].lower()
+        for i in range(1, len(ui_lang_parts)):
+            if len(ui_lang_parts[i]) == 2 and ui_lang_parts[i].isalpha():
+                ui_lang_parts[i] = ui_lang_parts[i].upper()
+        ui_lang = "-".join(ui_lang_parts)
+
     parts = searxng_locale.replace("_", "-").split("-")
     lang = parts[0].lower()
     args["search_lang"] = lang
@@ -261,6 +269,8 @@ def request(query: str, params: "OnlineParams") -> None:
     # error message (e.g. plan-tier rejections return HTTP 422 with details
     # in the JSON body).
     params["raise_for_httperror"] = False
+
+    logger.debug("braveapi request URL: %s", params["url"])
 
 
 def _parse_iso_date(value: str | None):
