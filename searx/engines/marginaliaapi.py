@@ -37,12 +37,15 @@ Use the literal value ``public`` as the API key to use the shared rate-limited
 key intended for casual access.
 """
 
+import logging
 import typing as t
 from urllib.parse import urlencode
 
 from searx.exceptions import SearxEngineAPIException
 from searx.result_types import EngineResults
 from searx.utils import searxng_useragent
+
+logger = logging.getLogger("searx.engines.marginaliaapi")
 
 if t.TYPE_CHECKING:
     from searx.extended_types import SXNG_Response
@@ -133,6 +136,8 @@ def request(query: str, params: "OnlineParams") -> None:
     params["headers"]["API-Key"] = api_key
     params["headers"]["User-Agent"] = searxng_useragent()
     params["headers"]["Accept"] = "application/json"
+
+    logger.debug("marginaliaapi request URL: %s", params["url"])
     # Marginalia returns 429 with a plain-text body when over the rate or
     # daily limit; surface that detail instead of a generic HTTP error.
     params["raise_for_httperror"] = False
