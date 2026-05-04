@@ -25,6 +25,7 @@ Known limitations vs. Brave Goggles: ``$inurl``, ``$intitle``,
 the URL string only.
 """
 
+import math
 import os
 import re
 import typing as t
@@ -58,8 +59,14 @@ MAX_DELIMS = 2
 MAX_GOGGLES = 256
 MAX_GOGGLES_PER_REQUEST = 8
 
-# Action precedence: discard wins over boost wins over downrank.
-_ACTION_RANK = {"discard": 3, "boost": 2, "downrank": 1}
+# Marginalia-shaped scoring: each matching rule contributes ±strength to a
+# per-result accumulator; the final score multiplier is exp(sum / softness).
+# Default softness=5 mirrors Marginalia's `exp(priorityTermAdjustment / 5)`.
+DEFAULT_SCORE_SOFTNESS = 5.0
+# Clamp the per-result multiplier (mirrors `searx.results.calculate_score`'s
+# clamp) so a runaway accumulator can't produce ±inf via exp().
+MIN_SCORE_MULTIPLIER = 1e-3
+MAX_SCORE_MULTIPLIER = 1e3
 
 
 class GoggleParseError(ValueError):
@@ -371,10 +378,19 @@ class SXNGPlugin(Plugin):
             preference_section="general",
         )
         self.registry: dict[str, Goggle] = {}
+        self.score_softness: float = DEFAULT_SCORE_SOFTNESS
 
     def init(self, app: "flask.Flask") -> bool:
         cfg = settings.get("goggles") or {}
         directory = cfg.get("dir") if isinstance(cfg, dict) else None
+        if isinstance(cfg, dict):
+            try:
+                softness = float(cfg.get("score_softness", DEFAULT_SCORE_SOFTNESS))
+            except (TypeError, ValueError):
+                softness = DEFAULT_SCORE_SOFTNESS
+            # Softness <= 0 would make exp() blow up or invert; reject and
+            # fall back to the default rather than silently misbehaving.
+            self.score_softness = softness if softness > 0 else DEFAULT_SCORE_SOFTNESS
         if not directory:
             log.debug("weblibre_goggles: no goggles.dir configured; disabling")
             return False
@@ -491,17 +507,29 @@ class SXNGPlugin(Plugin):
             for i in range(len(parts)):
                 host_parents.append(".".join(parts[i:]))
 
-        best_action: str | None = None
-        best_strength = 0
+        # Marginalia-shaped scoring: accumulate ±strength contributions
+        # across every matching rule in every active goggle into a single
+        # adjustment, then convert to a multiplier via
+        # ``exp(adjustment / softness)``. Discard still wins outright (a
+        # single matching discard rule drops the result, and a goggle's
+        # ``default_discard`` mode drops anything not explicitly matched
+        # by a non-discard rule on that goggle).
+        bonus_sum = 0.0
         any_default_discard = False
+        any_rule_matched = False
 
-        def _consider(action: str, strength: int) -> None:
-            nonlocal best_action, best_strength
-            if best_action is None or _ACTION_RANK[action] > _ACTION_RANK[best_action]:
-                best_action = action
-                best_strength = strength
-            elif action == best_action and strength > best_strength:
-                best_strength = strength
+        def _apply_rule(rule: Rule) -> bool:
+            """Apply a matching rule to the accumulators. Returns True
+            when the result must be dropped (an explicit discard hit)."""
+            nonlocal bonus_sum, any_rule_matched
+            any_rule_matched = True
+            if rule.action == "discard":
+                return True
+            if rule.action == "boost":
+                bonus_sum += rule.strength
+            elif rule.action == "downrank":
+                bonus_sum -= rule.strength
+            return False
 
         for goggle in goggles:
             if goggle.default_discard:
@@ -513,36 +541,40 @@ class SXNGPlugin(Plugin):
                 if not rules:
                     continue
                 for rule in rules:
-                    _consider(rule.action, rule.strength)
-                if best_action == "discard":
-                    break
+                    if _apply_rule(rule):
+                        log.debug("weblibre_goggles: discard %s", url)
+                        return False
 
-            # Slow path: rules with patterns. These are scanned linearly,
-            # but in practice they're a tiny fraction of total rules.
-            if best_action != "discard":
-                for rule in goggle.pattern_rules:
-                    if not rule.matches(url, host):
-                        continue
-                    _consider(rule.action, rule.strength)
-                    if best_action == "discard":
-                        break
+            # Slow path: rules with patterns.
+            for rule in goggle.pattern_rules:
+                if not rule.matches(url, host):
+                    continue
+                if _apply_rule(rule):
+                    log.debug("weblibre_goggles: discard %s", url)
+                    return False
 
-            if best_action == "discard":
-                break
-
-        if best_action is None and any_default_discard:
+        # Preserve original default-discard semantics: if any active goggle
+        # has a bare ``$discard`` (default = discard) and no rule matched
+        # this result anywhere across the active goggles, drop it.
+        if any_default_discard and not any_rule_matched:
             log.debug("weblibre_goggles: default-discard %s", url)
             return False
-        if best_action == "discard":
-            log.debug("weblibre_goggles: discard %s", url)
-            return False
 
-        if isinstance(result, (MainResult, LegacyResult)):
-            if best_action == "boost":
-                log.debug("weblibre_goggles: boost %s (strength=%d)", url, best_strength)
-                result.priority = "high"
-            elif best_action == "downrank":
-                log.debug("weblibre_goggles: downrank %s (strength=%d)", url, best_strength)
-                result.priority = "low"
+        if bonus_sum != 0.0 and isinstance(result, (MainResult, LegacyResult)):
+            multiplier = math.exp(bonus_sum / self.score_softness)
+            multiplier = max(MIN_SCORE_MULTIPLIER, min(multiplier, MAX_SCORE_MULTIPLIER))
+            current = getattr(result, "score_multiplier", 1.0) or 1.0
+            new_value = current * multiplier
+            if isinstance(result, LegacyResult):
+                result["score_multiplier"] = new_value
+            else:
+                result.score_multiplier = new_value
+            log.debug(
+                "weblibre_goggles: %s adjustment=%+g multiplier=%.3f for %s",
+                "boost" if bonus_sum > 0 else "downrank",
+                bonus_sum,
+                multiplier,
+                url,
+            )
 
         return True

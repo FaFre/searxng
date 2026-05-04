@@ -77,84 +77,117 @@ class ParserTests(unittest.TestCase):
 
 
 class _FakeResult:
-    """Minimal stand-in for MainResult — has .url, .parsed_url, .priority."""
+    """Minimal stand-in for MainResult — has .url, .parsed_url, .engine
+    and the score_multiplier channel the plugin writes to. The plugin's
+    isinstance gate against MainResult/LegacyResult means we have to
+    register this class as a virtual subclass per test path; instead, we
+    monkey-patch the gate at call time in MatchingTests._run.
+    """
 
     def __init__(self, url: str):
         self.url = url
         self.parsed_url = urlparse(url)
-        self.priority = ""
+        self.engine = ""
+        self.score_multiplier = 1.0
 
 
 class MatchingTests(unittest.TestCase):
-    def _plugin_with_registry(self, registry):
+    """Validate Marginalia-shaped scoring through the plugin's on_result
+    path. Boost adds to the bonus accumulator, downrank subtracts, and the
+    final multiplier is exp(sum / softness). Discard returns False."""
+
+    def _make_plugin(self, registry, softness=5.0):
+        from searx.plugins.weblibre_goggles import DEFAULT_SCORE_SOFTNESS
+
         plugin = SXNGPlugin.__new__(SXNGPlugin)
         plugin.registry = registry
+        plugin.score_softness = softness or DEFAULT_SCORE_SOFTNESS
+        plugin.log = Mock()
         return plugin
 
     def _run(self, goggle, url):
+        """Invoke plugin.on_result with the goggle attached. Returns
+        (kept, score_multiplier) where ``kept`` is the on_result return
+        value and ``score_multiplier`` reflects accumulated adjustments."""
+        from unittest.mock import patch
         from searx.plugins import weblibre_goggles as mod
 
-        # Bypass MainResult/LegacyResult isinstance gate by patching it
-        # for the call: use the _FakeResult and treat priority writes as
-        # plain attribute assignment by monkey-patching the isinstance
-        # check via subclass.
+        plugin = self._make_plugin({"g": goggle})
+        search = Mock()
+        search.weblibre_goggles = [goggle]
         result = _FakeResult(url)
-        host = (result.parsed_url.netloc or "").lower()
-
-        best_action = None
-        best_strength = 0
-        for rule in goggle.rules:
-            if not rule.matches(result.url, host):
-                continue
-            from searx.plugins.weblibre_goggles import _ACTION_RANK
-
-            if best_action is None or _ACTION_RANK[rule.action] > _ACTION_RANK[
-                best_action
-            ]:
-                best_action = rule.action
-                best_strength = rule.strength
-            elif rule.action == best_action and rule.strength > best_strength:
-                best_strength = rule.strength
-
-        if best_action is None and goggle.default_discard:
-            return ("discard", 0)
-        if best_action == "discard":
-            return ("discard", best_strength)
-        return (best_action, best_strength)
+        # MainResult is a msgspec.Struct (no virtual-subclass registration),
+        # so swap the names the plugin's isinstance gate looks at to point
+        # at _FakeResult for the duration of the call.
+        with patch.object(mod, "MainResult", _FakeResult), patch.object(
+            mod, "LegacyResult", _FakeResult
+        ):
+            kept = plugin.on_result(Mock(), search, result)
+        return kept, result.score_multiplier
 
     def test_site_matches_host_and_subdomain(self):
         g = parse_goggle("x", "$boost=2,site=github.com\n")
-        self.assertEqual(self._run(g, "https://github.com/foo")[0], "boost")
-        self.assertEqual(self._run(g, "https://api.github.com/foo")[0], "boost")
-        # not unrelated host that contains the substring
-        self.assertEqual(self._run(g, "https://notgithub.com/foo")[0], None)
+        kept, m = self._run(g, "https://github.com/foo")
+        self.assertTrue(kept)
+        self.assertGreater(m, 1.0)
+        kept, m = self._run(g, "https://api.github.com/foo")
+        self.assertTrue(kept)
+        self.assertGreater(m, 1.0)
+        # unrelated host that merely contains the substring → no match
+        kept, m = self._run(g, "https://notgithub.com/foo")
+        self.assertTrue(kept)
+        self.assertEqual(m, 1.0)
 
-    def test_discard_wins_over_boost(self):
+    def test_discard_drops_result_even_with_boost(self):
         g = parse_goggle(
             "x", "$boost=5,site=example.com\n$discard,site=example.com\n"
         )
-        action, _ = self._run(g, "https://example.com/x")
-        self.assertEqual(action, "discard")
+        kept, _ = self._run(g, "https://example.com/x")
+        self.assertFalse(kept)
 
-    def test_boost_wins_over_downrank(self):
+    def test_boost_and_downrank_are_additive(self):
+        # boost=2 + downrank=2 → bonus_sum 0 → multiplier 1.0 (no change)
         g = parse_goggle(
             "x", "$downrank=2,site=example.com\n$boost=2,site=example.com\n"
         )
-        action, _ = self._run(g, "https://example.com/x")
-        self.assertEqual(action, "boost")
+        kept, m = self._run(g, "https://example.com/x")
+        self.assertTrue(kept)
+        self.assertAlmostEqual(m, 1.0)
 
     def test_default_discard_drops_unmatched_keeps_boosted(self):
         g = parse_goggle("x", "$discard\n$boost=2,site=keep.com\n")
-        self.assertEqual(self._run(g, "https://keep.com/a")[0], "boost")
-        self.assertEqual(self._run(g, "https://other.com/a")[0], "discard")
+        kept_keep, m_keep = self._run(g, "https://keep.com/a")
+        self.assertTrue(kept_keep)
+        self.assertGreater(m_keep, 1.0)
+        kept_other, _ = self._run(g, "https://other.com/a")
+        self.assertFalse(kept_other)
 
-    def test_strength_tiebreaker_within_action(self):
+    def test_two_boosts_accumulate(self):
+        # boost=3 + boost=7 → bonus_sum 10 → exp(10/5) ≈ 7.39
+        import math
+
         g = parse_goggle(
             "x", "$boost=3,site=a.com\n$boost=7,site=a.com\n"
         )
-        action, strength = self._run(g, "https://a.com/x")
-        self.assertEqual(action, "boost")
-        self.assertEqual(strength, 7)
+        kept, m = self._run(g, "https://a.com/x")
+        self.assertTrue(kept)
+        self.assertAlmostEqual(m, math.exp(10 / 5), places=4)
+
+    def test_softness_curve(self):
+        import math
+
+        for strength in (1, 5, 10):
+            g = parse_goggle("x", f"$boost={strength},site=a.com\n")
+            _, m = self._run(g, "https://a.com/x")
+            self.assertAlmostEqual(m, math.exp(strength / 5), places=4)
+
+    def test_downrank_curve(self):
+        import math
+
+        g = parse_goggle("x", "$downrank=10,site=a.com\n")
+        kept, m = self._run(g, "https://a.com/x")
+        self.assertTrue(kept)
+        self.assertAlmostEqual(m, math.exp(-10 / 5), places=4)
 
 
 class OnResultLifecycleTests(unittest.TestCase):

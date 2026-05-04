@@ -397,6 +397,13 @@ class MainResult(Result):  # pylint: disable=missing-class-docstring
     priority: "MainResult.PriorityType" = ""
     """The priority can be set via :ref:`hostnames plugin`, for example."""
 
+    score_multiplier: float = 1.0
+    """Per-result score multiplier composed multiplicatively in
+    :py:func:`searx.results.calculate_score`. Default ``1.0`` is a no-op.
+    Used by the weblibre_goggles plugin to express fine-grained
+    boost/downrank strengths via Marginalia's ``exp(Σ strength / K)``
+    curve, instead of the binary ``priority`` channel."""
+
     engines: set[str] = set()
     """In a merged results list, the names of the engines that found this result
     are listed in this field."""
@@ -461,6 +468,7 @@ class LegacyResult(dict[str, t.Any]):
     img_src: str
     thumbnail: str
     priority: t.Literal["", "high", "low"]
+    score_multiplier: float
     engines: set[str]
     positions: list[int]
     score: float
@@ -491,6 +499,7 @@ class LegacyResult(dict[str, t.Any]):
         self["img_src"] = self.get("img_src", "")
         self["thumbnail"] = self.get("thumbnail", "")
         self["priority"] = self.get("priority", "")
+        self["score_multiplier"] = self.get("score_multiplier", 1.0)
         self["engines"] = self.get("engines", set())
         self["positions"] = self.get("positions", "")
         self["score"] = self.get("score", 0)

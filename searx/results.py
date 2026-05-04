@@ -59,6 +59,18 @@ def calculate_score(
         else:
             score += weight / position
 
+    # Per-result score multiplier (e.g. from the weblibre_goggles plugin's
+    # fine-grained boost/downrank). Default 1.0 is a no-op for any result
+    # that doesn't set the field. Clamped to a sane range so a pathological
+    # goggle can't produce ±inf and corrupt sort order.
+    multiplier = 1.0
+    if isinstance(result, dict):
+        multiplier = result.get('score_multiplier', 1.0)
+    else:
+        multiplier = getattr(result, 'score_multiplier', 1.0)
+    if multiplier != 1.0:
+        score *= max(1e-3, min(float(multiplier), 1e3))
+
     return score
 
 
