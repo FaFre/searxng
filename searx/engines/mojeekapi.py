@@ -262,11 +262,34 @@ def request(query: str, params: "OnlineParams") -> None:
 
     # Locale-aware relevance boosts (see Mojeek "Results Scoring" docs).
     # Resolve via the traits system so SearXNG locale codes map to Mojeek's
-    # supported language/region codes (e.g. ``zh-Hans`` → ``zh``).
+    # supported language/region codes (e.g. ``zh-Hans`` → ``zh``). When
+    # ``engine_traits.json`` doesn't have an entry for this engine yet
+    # (newly added or pre-traits-fetch), fall back to a structural parse of
+    # the locale tag — Mojeek's ``lb``/``rb`` accept ISO 639-1 / 3166-1
+    # alpha-2 directly, so this still produces working requests.
     language_all = traits.custom.get("language_all", "") if traits.custom else ""
     region_all = traits.custom.get("region_all", "") if traits.custom else ""
     lang_code = traits.get_language(params["searxng_locale"], language_all)
     region_code = traits.get_region(params["searxng_locale"], region_all)
+
+    sxng_locale = params.get("searxng_locale") or ""
+    if sxng_locale and sxng_locale != "all":
+        parts = sxng_locale.replace("_", "-").split("-")
+        struct_lang = parts[0].lower() if parts and parts[0] else ""
+        struct_region = ""
+        # Pick the last 2-letter alpha segment as the region (skip script
+        # subtags like "Hans" in ``zh-Hans-CN``).
+        for p in reversed(parts[1:]):
+            if len(p) == 2 and p.isalpha():
+                struct_region = p.upper()
+                break
+        if not lang_code or lang_code == language_all:
+            if struct_lang:
+                lang_code = struct_lang
+        if not region_code or region_code == region_all:
+            if struct_region:
+                region_code = struct_region.lower()  # Mojeek accepts lower-case ISO codes
+
     if lang_code and lang_code != language_all:
         search_args["lb"] = lang_code
         if language_boost:
