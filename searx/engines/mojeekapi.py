@@ -56,6 +56,7 @@ language or region, the corresponding ``lb``/``rb`` boost parameters are sent
 to bias relevance toward that locale (see Mojeek's "Results Scoring" docs).
 """
 
+import logging
 import typing as t
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
@@ -65,6 +66,8 @@ from dateutil import parser
 from searx.enginelib.traits import EngineTraits
 from searx.exceptions import SearxEngineAPIException
 from searx.result_types import EngineResults
+
+logger = logging.getLogger("searx.engines.mojeekapi")
 
 if t.TYPE_CHECKING:
     from searx.extended_types import SXNG_Response
@@ -241,6 +244,8 @@ def request(query: str, params: "OnlineParams") -> None:
             search_args["rbb"] = region_boost
 
     params["url"] = f"{base_url}?{urlencode(search_args)}"
+
+    logger.debug("mojeekapi request URL: %s", params["url"])
 
 
 def _extract_published_date(published_date_raw: str | int | None):
