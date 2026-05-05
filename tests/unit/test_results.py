@@ -131,6 +131,52 @@ class ResultContainerTestCase(SearxTestCase):
         self.assertEqual(len(result_list), 1)
         self.assertEqual(result_list[0]["metadata"], "meta2")
 
+    def test_merge_url_result_fills_empty_fields(self):
+        eng1 = dict(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="google",
+        )
+        eng2 = dict(
+            url="http://example.org",
+            title="title",
+            content="content",
+            engine="duckduckgo",
+            thumbnail="https://example.org/thumb.jpg",
+            author="author",
+        )
+
+        container = ResultContainer()
+        container.extend(None, [eng1, eng2])
+        container.close()
+
+        result_list = container.get_ordered_results()
+        self.assertEqual(len(result_list), 1)
+        self.assertEqual(result_list[0]["thumbnail"], "https://example.org/thumb.jpg")
+        self.assertEqual(result_list[0]["author"], "author")
+
+    def test_urls_with_different_fragments_do_not_merge(self):
+        eng1 = dict(
+            url="https://example.org/docs#section-one",
+            title="section one",
+            content="content",
+            engine="google",
+        )
+        eng2 = dict(
+            url="https://example.org/docs#section-two",
+            title="section two",
+            content="content",
+            engine="duckduckgo",
+        )
+
+        container = ResultContainer()
+        container.extend(None, [eng1, eng2])
+        container.close()
+
+        result_list = container.get_ordered_results()
+        self.assertEqual(len(result_list), 2)
+
 
 class MergeMainResultTestCase(SearxTestCase):
 
@@ -221,3 +267,22 @@ class MergeMainResultTestCase(SearxTestCase):
         )
         merge_two_main_results(origin, other)
         self.assertEqual(origin.metadata, "")
+
+    def test_merge_fills_empty_fields(self):
+        origin = MainResult(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="google",
+        )
+        other = MainResult(
+            url="https://example.org",
+            title="title",
+            content="content",
+            engine="duckduckgo",
+            thumbnail="https://example.org/thumb.jpg",
+            author="author",
+        )
+        merge_two_main_results(origin, other)
+        self.assertEqual(origin.thumbnail, "https://example.org/thumb.jpg")
+        self.assertEqual(origin.author, "author")
