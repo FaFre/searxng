@@ -52,7 +52,7 @@ def _normalize_url_fields(result: "Result | LegacyResult"):
         result.parsed_url = result.parsed_url._replace(
             # if the result has no scheme, use http as default
             scheme=result.parsed_url.scheme or "http",
-            path=result.parsed_url.path,
+            path=result.parsed_url.path or "/",
         )
         result.url = result.parsed_url.geturl()
 
@@ -428,7 +428,7 @@ class MainResult(Result):  # pylint: disable=missing-class-docstring
         netloc = url.netloc.removeprefix("www.")
         return hash(
             f"{self.template}"
-            + f"|{netloc}|{url.path}|{url.params}|{url.query}|{url.fragment}"
+            + f"|{netloc}|{url.path}|{url.params}|{url.query}"
             + f"|{self.img_src}"
         )
 
@@ -558,7 +558,7 @@ class LegacyResult(dict[str, t.Any]):
             netloc = url.netloc.removeprefix("www.")
             return hash(
                 f"{self.template}"
-                + f"|{netloc}|{url.path}|{url.params}|{url.query}|{url.fragment}"
+                + f"|{netloc}|{url.path}|{url.params}|{url.query}"
                 + f"|{self.img_src}"
             )
 
