@@ -332,7 +332,7 @@ class Result(msgspec.Struct, kw_only=True):
         for field_name in self.__struct_fields__:
             self_val = getattr(self, field_name, UNSET)
             other_val = getattr(other, field_name, UNSET)
-            if self_val is UNSET and other_val not in (UNSET, "", None):
+            if self_val in (UNSET, "", None) and other_val not in (UNSET, "", None):
                 setattr(self, field_name, other_val)
 
 
@@ -428,7 +428,7 @@ class MainResult(Result):  # pylint: disable=missing-class-docstring
         netloc = url.netloc.removeprefix("www.")
         return hash(
             f"{self.template}"
-            + f"|{netloc}|{url.path}|{url.params}|{url.query}"
+            + f"|{netloc}|{url.path}|{url.params}|{url.query}|{url.fragment}"
             + f"|{self.img_src}"
         )
 
@@ -558,7 +558,7 @@ class LegacyResult(dict[str, t.Any]):
             netloc = url.netloc.removeprefix("www.")
             return hash(
                 f"{self.template}"
-                + f"|{netloc}|{url.path}|{url.params}|{url.query}"
+                + f"|{netloc}|{url.path}|{url.params}|{url.query}|{url.fragment}"
                 + f"|{self.img_src}"
             )
 
@@ -584,7 +584,7 @@ class LegacyResult(dict[str, t.Any]):
         # ``None``, it is also considered *not set*.
         for field_name, other_val in other.items():
             self_val = self.get(field_name, UNSET)
-            if self_val is UNSET and other_val not in ("", UNSET):
+            if self_val in (UNSET, "", None) and other_val not in (UNSET, "", None):
                 self[field_name] = other_val
 
     def filter_urls(self, filter_func: "Callable[[Result | LegacyResult, str, str], str | bool]"):
