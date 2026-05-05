@@ -156,16 +156,16 @@ class ResultContainerTestCase(SearxTestCase):
         self.assertEqual(result_list[0]["thumbnail"], "https://example.org/thumb.jpg")
         self.assertEqual(result_list[0]["author"], "author")
 
-    def test_urls_with_different_fragments_do_not_merge(self):
+    def test_root_urls_with_and_without_trailing_slash_merge(self):
         eng1 = dict(
-            url="https://example.org/docs#section-one",
-            title="section one",
+            url="https://www.schwabenpark.de/",
+            title="title one",
             content="content",
             engine="google",
         )
         eng2 = dict(
-            url="https://example.org/docs#section-two",
-            title="section two",
+            url="https://www.schwabenpark.de",
+            title="title two",
             content="content",
             engine="duckduckgo",
         )
@@ -175,7 +175,7 @@ class ResultContainerTestCase(SearxTestCase):
         container.close()
 
         result_list = container.get_ordered_results()
-        self.assertEqual(len(result_list), 2)
+        self.assertEqual(len(result_list), 1)
 
 
 class MergeMainResultTestCase(SearxTestCase):
