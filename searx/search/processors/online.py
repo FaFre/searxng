@@ -17,6 +17,7 @@ from searx.exceptions import (
     SearxEngineCaptchaException,
     SearxEngineTooManyRequestsException,
 )
+from searx.metrics import counter_inc
 from searx.metrics.error_recorder import count_error
 from ..online_cache import get_online_response_cache
 from .abstract import EngineProcessor, RequestParams
@@ -240,10 +241,12 @@ class OnlineProcessor(EngineProcessor):
             cached_response = response_cache.get(cache_key, params, fresh_only=True)
             if cached_response is not None:
                 try:
+                    counter_inc('engine', self.engine.name, 'response_cache', 'count', 'hit')
                     return self.engine.response(cached_response)
                 except Exception:  # pylint: disable=broad-except
                     self.logger.warning("response-cache hit was invalid, deleting key %s", cache_key, exc_info=True)
                     response_cache.delete(cache_key)
+            counter_inc('engine', self.engine.name, 'response_cache', 'count', 'miss')
 
         inflight_owner = False
         if cache_policy is not None and cache_key is not None:
@@ -271,6 +274,7 @@ class OnlineProcessor(EngineProcessor):
                     if stale_response is not None:
                         self.logger.debug("response-cache stale fallback for %s after request error", self.engine.name)
                         try:
+                            counter_inc('engine', self.engine.name, 'response_cache', 'count', 'stale_hit')
                             return self.engine.response(stale_response)
                         except Exception:  # pylint: disable=broad-except
                             self.logger.warning(
@@ -291,6 +295,7 @@ class OnlineProcessor(EngineProcessor):
                             response.status_code,
                         )
                         try:
+                            counter_inc('engine', self.engine.name, 'response_cache', 'count', 'stale_hit')
                             return self.engine.response(stale_response)
                         except Exception:  # pylint: disable=broad-except
                             self.logger.warning(

@@ -97,6 +97,10 @@ def initialize(engine_names: list[str] | None = None, enabled: bool = True) -> N
         counter_storage.configure('engine', engine_name, 'search', 'count', 'successful')
         # global counter of errors
         counter_storage.configure('engine', engine_name, 'search', 'count', 'error')
+        # response cache counters
+        counter_storage.configure('engine', engine_name, 'response_cache', 'count', 'hit')
+        counter_storage.configure('engine', engine_name, 'response_cache', 'count', 'miss')
+        counter_storage.configure('engine', engine_name, 'response_cache', 'count', 'stale_hit')
         # score of the engine
         counter_storage.configure('engine', engine_name, 'score')
         # result count per requests
@@ -287,6 +291,30 @@ def openmetrics(engine_stats, engine_reliabilities):
             data_info=[{'engine_name': engine['name']} for engine in engine_stats['time']],
             data=[
                 engine_reliabilities.get(engine['name'], {}).get('reliability', 0) or 0
+                for engine in engine_stats['time']
+            ],
+        ),
+        OpenMetricsFamily(
+            key="searxng_engines_response_cache_hits_total",
+            type_hint="counter",
+            help_hint="The total amount of fresh response-cache hits for the engine",
+            data_info=[{'engine_name': engine['name']} for engine in engine_stats['time']],
+            data=[counter('engine', engine['name'], 'response_cache', 'count', 'hit') for engine in engine_stats['time']],
+        ),
+        OpenMetricsFamily(
+            key="searxng_engines_response_cache_misses_total",
+            type_hint="counter",
+            help_hint="The total amount of response-cache misses for the engine",
+            data_info=[{'engine_name': engine['name']} for engine in engine_stats['time']],
+            data=[counter('engine', engine['name'], 'response_cache', 'count', 'miss') for engine in engine_stats['time']],
+        ),
+        OpenMetricsFamily(
+            key="searxng_engines_response_cache_stale_hits_total",
+            type_hint="counter",
+            help_hint="The total amount of stale response-cache fallbacks for the engine",
+            data_info=[{'engine_name': engine['name']} for engine in engine_stats['time']],
+            data=[
+                counter('engine', engine['name'], 'response_cache', 'count', 'stale_hit')
                 for engine in engine_stats['time']
             ],
         ),
