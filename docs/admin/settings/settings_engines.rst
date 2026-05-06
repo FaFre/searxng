@@ -43,6 +43,12 @@ engine is shown.  Most of the options have a default value or even are optional.
      categories: general
      timeout: 3.0
      api_key: 'apikey'
+     response_cache:
+       enabled: true
+       scope: example-api
+       ttl: 21600
+       stale_ttl: 259200
+       max_body_size: 1048576
      disabled: false
      language: en_US
      tokens: [ 'my-secret-token' ]
@@ -127,6 +133,51 @@ engine is shown.  Most of the options have a default value or even are optional.
   is described in the file.  Engines that require an API key are set to
   ``inactive: true`` by default.  To enable such an engine, provide the API key
   and set ``inactive: false``.
+
+``response_cache`` : optional
+  Cache raw upstream responses for an ``online`` engine.  This is intended for
+  paid or rate-limited APIs where repeated identical requests should reuse a
+  previously stored payload.
+
+  The cache backend is selected automatically:
+
+  - Valkey when :ref:`settings valkey` is configured.
+  - SQLite otherwise, using ``/var/cache/searxng/response-cache.db`` when the
+    directory exists, or ``/tmp/sxng_response_cache.db`` as a fallback.
+
+  Supported keys are:
+
+  - ``enabled``: activate response caching for this engine.
+  - ``scope``: optional shared cache namespace.  Use the same value for related
+    engine variants that can reuse one upstream payload, for example web/news/video
+    views of the same API.
+  - ``ttl``: time in seconds a cached response is considered fresh.
+  - ``stale_ttl``: total retention time in seconds.  Between ``ttl`` and
+    ``stale_ttl`` the payload is stale and can still be used as a fallback on
+    upstream errors such as ``429`` or ``503``.
+  - ``max_body_size``: maximum response body size in bytes to store.
+
+  The cache key is derived from the finalized upstream request shape (HTTP
+  method, URL, locale-sensitive headers, request body, and similar inputs), so
+  engines can opt in without custom cache code.  Randomized headers such as the
+  browser ``User-Agent`` are intentionally excluded to keep hit rates stable.
+
+  Example:
+
+  .. code:: yaml
+
+     - name: braveapi
+       engine: braveapi
+       api_key: ''
+       response_cache:
+         enabled: true
+         scope: braveapi
+         ttl: 21600
+         stale_ttl: 259200
+
+  To keep fork maintenance simple, the implementation is centralized in the
+  online processor and a dedicated cache helper module.  Adding caching for
+  another ``online`` engine usually requires only this YAML block.
 
 ``disabled`` : optional
   To disable by default the engine, but not deleting it.  It will allow the user

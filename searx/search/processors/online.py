@@ -18,6 +18,7 @@ from searx.exceptions import (
     SearxEngineTooManyRequestsException,
 )
 from searx.metrics.error_recorder import count_error
+from ..online_cache import get_online_response_cache
 from .abstract import EngineProcessor, RequestParams
 
 if t.TYPE_CHECKING:
@@ -229,12 +230,83 @@ class OnlineProcessor(EngineProcessor):
         if not params["url"]:
             return None
 
-        # send request
-        response = self._send_http_request(params)
+        # Keep response-cache policy and storage details in a dedicated module so
+        # the processor stays a narrow integration point when forks rebase.
+        response_cache = get_online_response_cache()
+        cache_policy = response_cache.get_policy(self.engine)
+        cache_key = None
+        if cache_policy is not None:
+            cache_key = response_cache.make_key(cache_policy, params)
+            cached_response = response_cache.get(cache_key, params, fresh_only=True)
+            if cached_response is not None:
+                try:
+                    return self.engine.response(cached_response)
+                except Exception:  # pylint: disable=broad-except
+                    self.logger.warning("response-cache hit was invalid, deleting key %s", cache_key, exc_info=True)
+                    response_cache.delete(cache_key)
 
-        # parse the response
-        response.search_params = params
-        return self.engine.response(response)
+        inflight_owner = False
+        if cache_policy is not None and cache_key is not None:
+            inflight_owner = response_cache.acquire_inflight(cache_key, self.engine.timeout)
+            if not inflight_owner:
+                cached_response = response_cache.get(cache_key, params, fresh_only=True)
+                if cached_response is not None:
+                    try:
+                        return self.engine.response(cached_response)
+                    except Exception:  # pylint: disable=broad-except
+                        self.logger.warning(
+                            "response-cache refresh yielded invalid entry, deleting key %s",
+                            cache_key,
+                            exc_info=True,
+                        )
+                        response_cache.delete(cache_key)
+
+        try:
+            try:
+                # send request
+                response = self._send_http_request(params)
+            except Exception:
+                if cache_policy is not None and cache_key is not None:
+                    stale_response = response_cache.get(cache_key, params, fresh_only=False)
+                    if stale_response is not None:
+                        self.logger.debug("response-cache stale fallback for %s after request error", self.engine.name)
+                        try:
+                            return self.engine.response(stale_response)
+                        except Exception:  # pylint: disable=broad-except
+                            self.logger.warning(
+                                "response-cache stale entry was invalid, deleting key %s",
+                                cache_key,
+                                exc_info=True,
+                            )
+                            response_cache.delete(cache_key)
+                raise
+
+            if cache_policy is not None and cache_key is not None:
+                if response_cache.should_fallback_to_stale(response):
+                    stale_response = response_cache.get(cache_key, params, fresh_only=False)
+                    if stale_response is not None:
+                        self.logger.debug(
+                            "response-cache stale fallback for %s after HTTP %s",
+                            self.engine.name,
+                            response.status_code,
+                        )
+                        try:
+                            return self.engine.response(stale_response)
+                        except Exception:  # pylint: disable=broad-except
+                            self.logger.warning(
+                                "response-cache stale entry was invalid, deleting key %s",
+                                cache_key,
+                                exc_info=True,
+                            )
+                            response_cache.delete(cache_key)
+                response_cache.set(cache_key, cache_policy, response)
+
+            # parse the response
+            response.search_params = params
+            return self.engine.response(response)
+        finally:
+            if inflight_owner and cache_key is not None:
+                response_cache.release_inflight(cache_key)
 
     def search(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
