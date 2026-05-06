@@ -1652,6 +1652,10 @@ engines:
     shortcut: marapi
     # read https://about.marginalia-search.com/article/api/
     api_key: ""
+    response_cache:
+      enabled: true
+      ttl: 21600
+      stale_ttl: 259200
     inactive: true
 
   - name: mastodon users
@@ -2860,6 +2864,10 @@ engines:
     shortcut: mjkapi
     # read https://www.mojeek.com/support/api/search/
     api_key: ""
+    response_cache:
+      enabled: true
+      ttl: 43200
+      stale_ttl: 604800
     inactive: true
 
   - name: mojeek images
@@ -3284,6 +3292,11 @@ engines:
     shortcut: brapi
     # read https://docs.searxng.org/dev/engines/online/brave.html
     api_key: ""
+    response_cache:
+      enabled: true
+      scope: braveapi
+      ttl: 21600
+      stale_ttl: 259200
     inactive: true
 
   - name: braveapi.news
@@ -3293,6 +3306,11 @@ engines:
     categories: [news]
     search_type: news
     api_key: ""
+    response_cache:
+      enabled: true
+      scope: braveapi
+      ttl: 21600
+      stale_ttl: 259200
     inactive: true
 
   - name: braveapi.videos
@@ -3302,6 +3320,11 @@ engines:
     categories: [videos, web]
     search_type: videos
     api_key: ""
+    response_cache:
+      enabled: true
+      scope: braveapi
+      ttl: 21600
+      stale_ttl: 259200
     inactive: true
 
   - name: brave
