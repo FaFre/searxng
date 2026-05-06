@@ -96,6 +96,7 @@ from searx.preferences import (
 )
 import searx.answerers
 import searx.plugins
+from searx import weblibre_search_presets
 
 
 from searx.metrics import get_engines_stats, get_engine_errors, get_reliabilities, histogram, counter, openmetrics
@@ -448,6 +449,15 @@ def render(template_name: str, **kwargs):
         )
     )
     kwargs['urlparse'] = urlparse
+    current_preset = weblibre_search_presets.match_preset(sxng_request.form)
+    current_engines, current_weight_overrides, current_goggle = (
+        weblibre_search_presets.get_effective_form_values(sxng_request.form)
+    )
+    kwargs['search_presets'] = weblibre_search_presets.get_presets()
+    kwargs['current_search_preset'] = current_preset.id if current_preset else ''
+    kwargs['current_engines'] = current_engines
+    kwargs['current_weight_overrides'] = current_weight_overrides
+    kwargs['current_goggle'] = current_goggle
 
     start_time = default_timer()
     result = render_template('{}/{}'.format(kwargs['theme'], template_name), **kwargs)
@@ -652,6 +662,7 @@ def search():
         search_query, raw_text_query, _, _, selected_locale = get_search_query_from_webapp(
             sxng_request.preferences, sxng_request.form
         )
+        weblibre_search_presets.apply_preset(sxng_request.form, search_query)
         search_obj = searx.search.SearchWithPlugins(search_query, sxng_request, sxng_request.user_plugins)
         result_container = search_obj.search()
 
@@ -1378,6 +1389,7 @@ def init():
 
     metrics: bool = get_setting("general.enable_metrics")  # type: ignore
     searx.search.initialize(check_network=True, enable_metrics=metrics)
+    weblibre_search_presets.initialize()
 
     limiter.initialize(app, settings)
     favicons.init()

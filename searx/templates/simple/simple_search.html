@@ -9,6 +9,9 @@
       </div>
     </div>
   </div>
+  <div class="search_filters">
+    {% include 'simple/filters/search_preset.html' %}
+  </div>
   {% for category in selected_categories %}
   <input type="hidden" name="category_{{ category }}" value="1" >
   {% endfor %}
