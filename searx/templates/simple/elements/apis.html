@@ -13,6 +13,15 @@
             <input type="hidden" name="language" value="{{ current_language }}">
             <input type="hidden" name="time_range" value="{{ time_range }}">
             <input type="hidden" name="safesearch" value="{{ safesearch }}">
+            {%- if current_engines -%}
+              <input type="hidden" name="engines" value="{{ current_engines|e }}">
+            {%- endif -%}
+            {%- if current_weight_overrides -%}
+              <input type="hidden" name="weight_overrides" value="{{ current_weight_overrides|e }}">
+            {%- endif -%}
+            {%- if current_goggle -%}
+              <input type="hidden" name="goggle" value="{{ current_goggle|e }}">
+            {%- endif -%}
             <input type="hidden" name="format" value="{{ output_type }}">
             {%- if timeout_limit -%}
               <input type="hidden" name="timeout_limit" value="{{ timeout_limit|e }}" >

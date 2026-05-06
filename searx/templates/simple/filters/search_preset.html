@@ -1,0 +1,63 @@
+{% if search_presets %}
+<select name="preset" id="preset" class="preset" aria-label="Search preset">
+    <option value="" {% if not current_search_preset %}selected="selected"{% endif %}>Preset: off</option>
+    {%- for preset in search_presets -%}
+    <option value="{{ preset.id }}"
+            {% if preset.id == current_search_preset %}selected="selected"{% endif %}
+            data-engines="{{ preset.engines_param|e }}"
+            data-weight-overrides="{{ preset.weight_overrides_param|e }}"
+            data-goggle="{{ preset.goggle_param|e }}"
+            title="{{ preset.description|e }}">{{ preset.label }}</option>
+    {%- endfor -%}
+</select>
+<input type="hidden" id="preset-engines" name="engines" value="{{ current_engines|e }}" {% if not current_engines %}disabled{% endif %}>
+<input type="hidden" id="preset-weight-overrides" name="weight_overrides" value="{{ current_weight_overrides|e }}" {% if not current_weight_overrides %}disabled{% endif %}>
+<input type="hidden" id="preset-goggle" name="goggle" value="{{ current_goggle|e }}" {% if not current_goggle %}disabled{% endif %}>
+<script>
+(() => {
+  const form = document.getElementById('search');
+  const presetSelect = document.getElementById('preset');
+  const enginesInput = document.getElementById('preset-engines');
+  const weightsInput = document.getElementById('preset-weight-overrides');
+  const goggleInput = document.getElementById('preset-goggle');
+  if (!(form instanceof HTMLFormElement) || !(presetSelect instanceof HTMLSelectElement)
+      || !(enginesInput instanceof HTMLInputElement)
+      || !(weightsInput instanceof HTMLInputElement)
+      || !(goggleInput instanceof HTMLInputElement)) {
+    return;
+  }
+
+  const setValue = (input, value) => {
+    input.value = value;
+    input.disabled = value === '';
+  };
+
+  const syncPreset = () => {
+    const option = presetSelect.selectedOptions[0];
+    setValue(enginesInput, option?.dataset.engines ?? '');
+    setValue(weightsInput, option?.dataset.weightOverrides ?? '');
+    setValue(goggleInput, option?.dataset.goggle ?? '');
+  };
+
+  presetSelect.removeAttribute('name');
+
+  const hasPresetSelection = presetSelect.value !== '';
+  if (hasPresetSelection || (!enginesInput.value && !weightsInput.value && !goggleInput.value)) {
+    syncPreset();
+  }
+
+  presetSelect.addEventListener('change', () => {
+    syncPreset();
+    const isResultsPage = document.querySelector('main')?.id === 'main_results';
+    const queryInput = document.getElementById('q');
+    if (isResultsPage && queryInput instanceof HTMLInputElement && queryInput.value.trim() !== '') {
+      if (typeof form.requestSubmit === 'function') {
+        form.requestSubmit();
+      } else {
+        form.submit();
+      }
+    }
+  });
+})();
+</script>
+{% endif %}

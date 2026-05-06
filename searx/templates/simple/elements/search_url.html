@@ -13,6 +13,15 @@
         {%- if timeout_limit -%}
           &amp;timeout_limit={{ timeout_limit|urlencode }}
         {%- endif -%}
+        {%- if current_engines -%}
+          &amp;engines={{ current_engines|urlencode }}
+        {%- endif -%}
+        {%- if current_weight_overrides -%}
+          &amp;weight_overrides={{ current_weight_overrides|urlencode }}
+        {%- endif -%}
+        {%- if current_goggle -%}
+          &amp;goggle={{ current_goggle|urlencode }}
+        {%- endif -%}
       </pre>
     </div>
   </details>
