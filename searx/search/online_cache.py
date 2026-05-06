@@ -115,6 +115,9 @@ class _SQLiteBackend:
                 MAINTENANCE_PERIOD=60 * 60,
             )
         )
+        # Initialize the SQLite schema before this backend instance is exposed
+        # to concurrent request threads.
+        self.cache.DB
         self.ctx = self.cache.normalize_name(self.cache.cfg.name)
 
     def get(self, key: str) -> CachedResponse | None:

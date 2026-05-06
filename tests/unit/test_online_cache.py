@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # pylint: disable=missing-module-docstring,missing-class-docstring
 
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from searx.search import online_cache
 from searx.search.online_cache import OnlineResponseCache, ResponseCachePolicy
 
 from tests import SearxTestCase
@@ -63,3 +66,14 @@ class TestOnlineResponseCache(SearxTestCase):
 
         self.assertEqual(cache.make_key(policy, params_a), cache.make_key(policy, params_b))
         self.assertNotEqual(cache.make_key(policy, params_a), cache.make_key(policy, params_c))
+
+    def test_sqlite_backend_initializes_schema_before_use(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / 'response-cache.db'
+            self.setattr4test(online_cache, '_sqlite_db_url', lambda: str(db_path))
+
+            backend = online_cache._SQLiteBackend()
+            record = online_cache.CachedResponse(status_code=200, headers={}, body=b'{}', fresh_until=123)
+
+            self.assertTrue(backend.set('key', record, expire=60))
+            self.assertEqual(backend.get('key'), record)
