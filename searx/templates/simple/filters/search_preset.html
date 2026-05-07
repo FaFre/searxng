@@ -32,11 +32,24 @@
     input.disabled = value === '';
   };
 
+  const syncCategoryInputs = (hasEngines) => {
+    for (const input of form.elements) {
+      if (input instanceof HTMLInputElement && input.type === 'hidden' && input.name.startsWith('category_')) {
+        input.disabled = hasEngines;
+      }
+    }
+    const categoriesInput = document.getElementById('selected-categories');
+    if (categoriesInput instanceof HTMLInputElement) {
+      categoriesInput.disabled = hasEngines;
+    }
+  };
+
   const syncPreset = () => {
     const option = presetSelect.selectedOptions[0];
     setValue(enginesInput, option?.dataset.engines ?? '');
     setValue(weightsInput, option?.dataset.weightOverrides ?? '');
     setValue(goggleInput, option?.dataset.goggle ?? '');
+    syncCategoryInputs(enginesInput.value !== '');
   };
 
   presetSelect.removeAttribute('name');
