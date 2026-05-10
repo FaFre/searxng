@@ -66,6 +66,7 @@ from dateutil import parser
 from searx.enginelib.traits import EngineTraits
 from searx.exceptions import SearxEngineAPIException
 from searx.result_types import EngineResults
+from searx.utils import html_to_text
 
 logger = logging.getLogger("searx.engines.mojeekapi")
 
@@ -383,8 +384,8 @@ def response(resp: "SXNG_Response") -> EngineResults:
         res.add(
             res.types.MainResult(
                 url=result["url"],
-                title=result.get("title", ""),
-                content=result.get("desc", ""),
+                title=html_to_text(result.get("title") or ""),
+                content=html_to_text(result.get("desc") or ""),
                 publishedDate=_extract_published_date(
                     result.get("pdate") or result.get("timestamp") or result.get("cdatetimestamp")
                 ),
