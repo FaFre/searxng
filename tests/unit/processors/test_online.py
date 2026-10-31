@@ -23,9 +23,11 @@ def _json_response(status_code, payload):
 
 
 class FakeResponseCache:
-    def __init__(self, policy, response=None, stale_response=None):
+    def __init__(self, policy, response=None, stale_response=None, fresh_responses=None):
         self.policy = policy
         self.response = response
+        # optional sequence of results for consecutive fresh lookups
+        self.fresh_responses = list(fresh_responses) if fresh_responses is not None else None
         self.stale_response = stale_response
         self.set_calls = []
         self.release_calls = []
@@ -40,6 +42,8 @@ class FakeResponseCache:
     def get(self, key, params, fresh_only=True):  # pylint: disable=unused-argument
         self.get_calls.append(fresh_only)
         if fresh_only:
+            if self.fresh_responses is not None:
+                return self.fresh_responses.pop(0)
             return self.response
         return self.stale_response
 
@@ -156,6 +160,30 @@ class TestOnlineProcessor(SearxTestCase):
         params = self._get_params(online_processor, search_query, 'general')
 
         self.assertEqual(online_processor._search_basic('test', params), 'stale')
-        self.assertEqual(response_cache.get_calls, [True, False])
+        # fresh lookup, fresh re-check after acquiring the in-flight slot, stale fallback
+        self.assertEqual(response_cache.get_calls, [True, True, False])
         self.assertEqual(response_cache.set_calls, [])
+        self.assertEqual(response_cache.release_calls, ['cache-key'])
+
+    def test_search_basic_rechecks_cache_after_inflight_wait(self):
+        """A concurrent request for the same key stored the response while this
+        one waited for the in-flight slot: no second upstream request."""
+        engine = engines.engines[TEST_ENGINE_NAME]
+        online_processor = online.OnlineProcessor(engine)
+
+        cached_response = _json_response(200, {"source": "cache"})
+
+        response_cache = FakeResponseCache(policy=object(), fresh_responses=[None, cached_response])
+        self.setattr4test(online, 'get_online_response_cache', lambda: response_cache)
+        self.set_engine_attr(engine, 'request', lambda query, params: params.__setitem__('url', 'https://example.com/search?q=' + query))
+        self.set_engine_attr(engine, 'response', lambda resp: resp.json()["source"])
+        self.setattr4test(online_processor, '_send_http_request', mock.Mock(side_effect=AssertionError('live request should not run')))
+
+        search_query = SearchQuery('test', [EngineRef(TEST_ENGINE_NAME, 'general')], 'all', 0, 1, None, None, None)
+        params = self._get_params(online_processor, search_query, 'general')
+
+        self.assertEqual(online_processor._search_basic('test', params), 'cache')
+        self.assertEqual(response_cache.get_calls, [True, True])
+        self.assertEqual(response_cache.set_calls, [])
+        # the in-flight slot is released on the early return as well
         self.assertEqual(response_cache.release_calls, ['cache-key'])

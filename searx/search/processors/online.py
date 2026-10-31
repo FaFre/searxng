@@ -252,15 +252,19 @@ class OnlineProcessor(EngineProcessor):
                 except Exception:  # pylint: disable=broad-except
                     self.logger.warning("response-cache hit was invalid, deleting key %s", cache_key, exc_info=True)
                     response_cache.delete(cache_key)
-            counter_inc('engine', self.engine.name, 'response_cache', 'count', 'miss')
 
         inflight_owner = False
-        if cache_policy is not None and cache_key is not None:
-            inflight_owner = response_cache.acquire_inflight(cache_key, self.engine.timeout)
-            if not inflight_owner:
+        try:
+            if cache_policy is not None and cache_key is not None:
+                inflight_owner = response_cache.acquire_inflight(cache_key, self.engine.timeout)
+                # Check again once the in-flight slot is ours (or the wait timed
+                # out): a concurrent request for the same key has usually just
+                # stored the response.  Without this check every waiting caller
+                # sends its own upstream request after the first one finished.
                 cached_response = response_cache.get(cache_key, params, fresh_only=True)
                 if cached_response is not None:
                     try:
+                        counter_inc('engine', self.engine.name, 'response_cache', 'count', 'hit')
                         return self.engine.response(cached_response)
                     except Exception:  # pylint: disable=broad-except
                         self.logger.warning(
@@ -269,8 +273,8 @@ class OnlineProcessor(EngineProcessor):
                             exc_info=True,
                         )
                         response_cache.delete(cache_key)
+                counter_inc('engine', self.engine.name, 'response_cache', 'count', 'miss')
 
-        try:
             try:
                 # send request
                 response = self._send_http_request(params)
