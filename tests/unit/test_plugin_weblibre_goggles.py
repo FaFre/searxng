@@ -4,7 +4,8 @@
 import os
 import tempfile
 import unittest
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 from urllib.parse import urlparse
 
 from searx.plugins.weblibre_goggles import (
@@ -289,6 +290,58 @@ class OnResultLifecycleTests(unittest.TestCase):
         search = Mock()
         plugin.pre_search(request, search)
         self.assertEqual(len(search.weblibre_goggles), MAX_GOGGLES_PER_REQUEST)
+
+
+class HostedGoggleHandoffTests(unittest.TestCase):
+    """Hosted goggles go upstream to every braveapi instance, not only the one
+    named ``braveapi``, and are then skipped locally for their results."""
+
+    _make_plugin = MatchingTests._make_plugin  # pylint: disable=protected-access
+
+    ENGINES = {
+        "braveapi": SimpleNamespace(engine="braveapi"),
+        "braveapi.news": SimpleNamespace(engine="braveapi"),
+        "braveapi.videos": SimpleNamespace(engine="braveapi"),
+        "mojeekapi": SimpleNamespace(engine="mojeekapi"),
+    }
+
+    def setUp(self):
+        from searx.plugins import weblibre_goggles as mod
+
+        patcher = patch.dict(mod._engines, self.ENGINES)  # pylint: disable=protected-access
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.goggle = parse_goggle("hosted", "$discard,site=spam.com\n")
+        self.goggle.hosted_url = "https://example.org/hosted.goggle"
+
+    def test_pre_search_hands_off_to_every_braveapi_instance(self):
+        plugin = self._make_plugin({"hosted": self.goggle})
+        request = Mock()
+        request.form = {"goggle": "hosted"}
+        search = Mock()
+        search.search_query.engineref_list = [SimpleNamespace(name=name) for name in self.ENGINES]
+        search.search_query.engine_data = {}
+
+        plugin.pre_search(request, search)
+
+        self.assertEqual(
+            search.search_query.engine_data,
+            {
+                "braveapi": {"weblibre_goggles": "hosted"},
+                "braveapi.news": {"weblibre_goggles": "hosted"},
+                "braveapi.videos": {"weblibre_goggles": "hosted"},
+            },
+        )
+
+    def test_on_result_skips_hosted_goggles_for_braveapi_instances(self):
+        plugin = self._make_plugin({"hosted": self.goggle})
+        search = Mock()
+        search.weblibre_goggles = [self.goggle]
+
+        for engine_name, expected in (("braveapi.news", True), ("braveapi.videos", True), ("mojeekapi", False)):
+            result = _FakeResult("https://spam.com/x")
+            result.engine = engine_name
+            self.assertEqual(plugin.on_result(Mock(), search, result), expected, engine_name)
 
 
 class DirectoryLoaderTests(unittest.TestCase):

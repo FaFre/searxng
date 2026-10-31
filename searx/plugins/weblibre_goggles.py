@@ -33,6 +33,7 @@ import typing as t
 from flask_babel import gettext  # pyright: ignore[reportUnknownVariableType]
 
 from searx import settings
+from searx.engines import engines as _engines
 from searx.result_types._base import MainResult, LegacyResult
 from searx.plugins import Plugin, PluginInfo
 
@@ -361,6 +362,13 @@ def get_goggle(name: str) -> "Goggle | None":
     return _PLUGIN_INSTANCE.registry.get(name)
 
 
+def _is_braveapi(engine_name: str) -> bool:
+    """True for every engine instance built on the ``braveapi`` module
+    (``braveapi``, ``braveapi.news``, ``braveapi.videos``, ...).  All of them
+    send hosted goggles upstream."""
+    return getattr(_engines.get(engine_name), "engine", None) == "braveapi"
+
+
 class SXNGPlugin(Plugin):
     """Apply a per-query Brave-Goggles-compatible ranking profile."""
 
@@ -454,9 +462,9 @@ class SXNGPlugin(Plugin):
                 [g.name for g in resolved],
             )
             # Goggles with a `<name>.goggle.hosted` sibling are handed off
-            # to Brave via engine_data; the remainder are too large to ship
-            # (no public URL available) and must still be applied locally
-            # against braveapi results.
+            # to every braveapi instance in the query via engine_data; the
+            # remainder are too large to ship (no public URL available) and
+            # must still be applied locally against braveapi results.
             hosted_names = [
                 name
                 for name, g in zip(resolved_names, resolved)
@@ -464,9 +472,12 @@ class SXNGPlugin(Plugin):
             ]
             if hosted_names:
                 try:
-                    search.search_query.engine_data.setdefault("braveapi", {})[
-                        "weblibre_goggles"
-                    ] = ",".join(hosted_names)
+                    search_query = search.search_query
+                    for engineref in search_query.engineref_list:
+                        if _is_braveapi(engineref.name):
+                            search_query.engine_data.setdefault(engineref.name, {})[
+                                "weblibre_goggles"
+                            ] = ",".join(hosted_names)
                 except (AttributeError, TypeError) as exc:
                     log.debug(
                         "weblibre_goggles: could not write engine_data: %s", exc
@@ -484,11 +495,11 @@ class SXNGPlugin(Plugin):
         goggles: list[Goggle] = getattr(search, "weblibre_goggles", []) or []
         if not goggles:
             return True
-        # For braveapi results, drop goggles already handed off to Brave
-        # (those with a `.hosted` URL) — re-running them locally would
-        # double-rank. Goggles too large to host stay in the list and are
-        # applied locally as before.
-        if getattr(result, "engine", "") == "braveapi":
+        # For results of any braveapi instance, drop goggles already handed
+        # off to Brave (those with a `.hosted` URL) — re-running them locally
+        # would double-rank. Goggles too large to host stay in the list and
+        # are applied locally as before.
+        if _is_braveapi(getattr(result, "engine", "")):
             goggles = [g for g in goggles if not g.hosted_url]
             if not goggles:
                 return True
