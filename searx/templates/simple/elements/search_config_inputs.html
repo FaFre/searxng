@@ -1,0 +1,20 @@
+{#- Hidden inputs that keep the search configuration (categories or an explicit
+    engine list, weight overrides and goggles) when a form on the results page
+    starts a new request: pagination, suggestions, corrections, downloads.
+
+    Categories are left out when an explicit engine list is set: the server
+    would otherwise add every engine of those categories to the list (see
+    webadapter.parse_generic). -#}
+{%- if current_engines -%}
+  <input type="hidden" name="engines" value="{{ current_engines|e }}">
+{%- else -%}
+  {%- for category in selected_categories -%}
+    <input type="hidden" name="category_{{ category }}" value="1">
+  {%- endfor -%}
+{%- endif -%}
+{%- if current_weight_overrides -%}
+  <input type="hidden" name="weight_overrides" value="{{ current_weight_overrides|e }}">
+{%- endif -%}
+{%- if current_goggle -%}
+  <input type="hidden" name="goggle" value="{{ current_goggle|e }}">
+{%- endif -%}

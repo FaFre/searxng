@@ -7,7 +7,7 @@
         {%- if pageno > 1 -%}
           &amp;pageno={{ pageno }}
         {%- endif -%}
-        {%- if selected_categories -%}
+        {%- if selected_categories and not current_engines -%}
           &amp;categories={{ selected_categories|join(",") | replace(' ','+') }}
         {%- endif -%}
         {%- if timeout_limit -%}

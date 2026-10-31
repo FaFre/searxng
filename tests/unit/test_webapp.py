@@ -2,6 +2,9 @@
 # pylint: disable=missing-module-docstring,disable=missing-class-docstring,invalid-name
 
 import json
+import tempfile
+from pathlib import Path
+
 import babel
 from mock import Mock
 
@@ -10,6 +13,7 @@ import searx.search
 import searx.search.processors
 from searx.result_types._base import MainResult
 
+from searx import weblibre_search_presets
 from searx.results import Timing
 from searx.preferences import Preferences
 from tests import SearxTestCase
@@ -124,6 +128,45 @@ class ViewsTestCase(SearxTestCase):  # pylint: disable=too-many-public-methods
             b'<p class="content">\n    second <span class="highlight">test</span> ',
             result.data,
         )
+
+    def _next_page_form(self, html: bytes) -> bytes:
+        form = html[html.index(b'class="next_page"') :]
+        return form[: form.index(b'</form>')]
+
+    def test_search_html_pagination_keeps_search_preset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'search_presets.json'
+            preset = {
+                'label': 'P',
+                'description': 'P',
+                'engines': ['dummy engine'],
+                'weightOverrides': {'dummy engine': 2},
+                'goggles': ['tech'],
+            }
+            path.write_text(json.dumps({'presets': {'p': preset}}), encoding='utf-8')
+            weblibre_search_presets.initialize(path)
+        self.addCleanup(weblibre_search_presets.initialize)
+
+        result = self.client.post('/search', data={'q': 'test', 'preset': 'p', 'category_general': '1'})
+        next_page = self._next_page_form(result.data)
+
+        self.assertIn(b'name="engines" value="dummy engine"', next_page)
+        self.assertIn(b'name="weight_overrides" value="dummy engine:2.0"', next_page)
+        self.assertIn(b'name="goggle" value="tech"', next_page)
+        # categories would add every engine of the category to the list
+        self.assertNotIn(b'name="category_', next_page)
+        # same for the RSS link and the copyable search URL
+        self.assertIn(b'&amp;engines=dummy%20engine', result.data)
+        self.assertNotIn(b'&amp;categories=', result.data)
+
+    def test_search_html_pagination_keeps_categories_without_engines(self):
+        # the dummy engines are disabled by default, select one with its bang
+        # (bang selections use the pseudo category "none")
+        result = self.client.post('/search', data={'q': '!gd test'})
+        next_page = self._next_page_form(result.data)
+
+        self.assertIn(b'name="category_none"', next_page)
+        self.assertNotIn(b'name="engines"', next_page)
 
     def test_index_json(self):
         result = self.client.post('/', data={'q': 'test', 'format': 'json'})

@@ -5,9 +5,7 @@
       {%- for suggestion in suggestions -%}
       <li><form method="{{ method }}" action="{{ url_for('search') }}">
           <input type="hidden" name="q" value="{{ suggestion.url }}">
-          {%- for category in selected_categories -%}
-            <input type="hidden" name="category_{{ category }}" value="1">
-          {%- endfor -%}
+          {%- include 'simple/elements/search_config_inputs.html' -%}
           <input type="hidden" name="language" value="{{ current_language }}">
           <input type="hidden" name="time_range" value="{{ time_range }}">
           <input type="hidden" name="safesearch" value="{{ safesearch }}">
