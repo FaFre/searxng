@@ -1,17 +1,25 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # pylint: disable=missing-module-docstring,disable=missing-class-docstring,invalid-name
 
+import json
 from unittest import mock
-
-import httpx
 
 from searx.search.models import EngineRef, SearchQuery
 from searx.search.processors import online
 from searx import engines
+from searx.extended_types import SXNG_Response
 
 from tests import SearxTestCase
 
 TEST_ENGINE_NAME = "dummy engine"  # from the ./settings/test_settings.yml
+
+
+def _json_response(status_code, payload):
+    response = SXNG_Response()
+    response.status_code = status_code
+    response.content = json.dumps(payload).encode()
+    response.ok = 200 <= status_code < 400
+    return response
 
 
 class FakeResponseCache:
@@ -96,8 +104,7 @@ class TestOnlineProcessor(SearxTestCase):
         engine = engines.engines[TEST_ENGINE_NAME]
         online_processor = online.OnlineProcessor(engine)
 
-        cached_response = httpx.Response(200, json={"source": "cache"}, request=httpx.Request("GET", "https://example.com"))
-        cached_response.ok = True
+        cached_response = _json_response(200, {"source": "cache"})
 
         response_cache = FakeResponseCache(policy=object(), response=cached_response)
         self.setattr4test(online, 'get_online_response_cache', lambda: response_cache)
@@ -117,8 +124,7 @@ class TestOnlineProcessor(SearxTestCase):
         engine = engines.engines[TEST_ENGINE_NAME]
         online_processor = online.OnlineProcessor(engine)
 
-        live_response = httpx.Response(200, json={"source": "live"}, request=httpx.Request("GET", "https://example.com"))
-        live_response.ok = True
+        live_response = _json_response(200, {"source": "live"})
 
         response_cache = FakeResponseCache(policy=object())
         self.setattr4test(online, 'get_online_response_cache', lambda: response_cache)
@@ -137,10 +143,8 @@ class TestOnlineProcessor(SearxTestCase):
         engine = engines.engines[TEST_ENGINE_NAME]
         online_processor = online.OnlineProcessor(engine)
 
-        stale_response = httpx.Response(200, json={"source": "stale"}, request=httpx.Request("GET", "https://example.com"))
-        stale_response.ok = True
-        live_response = httpx.Response(429, json={"source": "live"}, request=httpx.Request("GET", "https://example.com"))
-        live_response.ok = False
+        stale_response = _json_response(200, {"source": "stale"})
+        live_response = _json_response(429, {"source": "live"})
 
         response_cache = FakeResponseCache(policy=object(), stale_response=stale_response)
         self.setattr4test(online, 'get_online_response_cache', lambda: response_cache)

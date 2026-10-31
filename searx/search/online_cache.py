@@ -11,16 +11,16 @@ import threading
 import time
 import typing as t
 
-import httpx
 import msgspec
+from curl_cffi.requests import Headers, Request
 
 from searx import logger
 from searx import valkeydb
 from searx.cache import ExpireCacheCfg, ExpireCacheSQLite
+from searx.extended_types import SXNG_Response
 
 if t.TYPE_CHECKING:
     from searx.enginelib import Engine
-    from searx.extended_types import SXNG_Response
     from searx.search.processors.online import OnlineParams
 
 log = logger.getChild("search.online_cache")
@@ -258,17 +258,13 @@ class OnlineResponseCache:
 
     @staticmethod
     def _build_response(record: CachedResponse, params: "OnlineParams") -> "SXNG_Response":
-        request = httpx.Request(params["method"], params["url"] or "")
-        response = t.cast(
-            "SXNG_Response",
-            httpx.Response(
-                status_code=record.status_code,
-                headers=record.headers,
-                content=record.body,
-                request=request,
-            ),
-        )
-        response.ok = not response.is_error
+        url = params["url"] or ""
+        response = SXNG_Response(request=Request(url, Headers(), params["method"]))
+        response.url = url
+        response.status_code = record.status_code
+        response.headers = Headers(record.headers)
+        response.content = record.body
+        response.ok = 200 <= record.status_code < 400
         response.search_params = params
         return response
 

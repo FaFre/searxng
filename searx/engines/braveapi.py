@@ -47,7 +47,7 @@ from dateutil import parser
 from searx.enginelib.traits import EngineTraits
 from searx.exceptions import SearxEngineAPIException
 from searx.result_types import EngineResults
-from searx.utils import get_embeded_stream_url, html_to_text
+from searx.utils import get_embedded_stream_url, html_to_text
 
 logger = logging.getLogger("searx.engines.braveapi")
 
@@ -825,7 +825,7 @@ def _add_video(res: EngineResults, result: dict[str, t.Any]) -> None:
             publishedDate=_published_date(result),
             thumbnail=_thumbnail(result) or "",
             img_src=_thumbnail_full(result) or "",
-            iframe_src=get_embeded_stream_url(result["url"]) or "",
+            iframe_src=get_embedded_stream_url(result["url"]) or "",
             author=(
                 video.get("creator")
                 or video_author.get("long_name")
