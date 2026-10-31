@@ -265,7 +265,7 @@ class TestMojeekApiEngine(SearxTestCase):
         }
         results = list(mojeekapi.response(self._resp(payload)))
         self.assertIn("gravity: 47", results[0]["metadata"])
-        self.assertIn("2 phrases matched", results[0]["metadata"])
+        self.assertIn("phrases: 2 matched", results[0]["metadata"])
 
     def test_response_metadata_includes_mres(self):
         payload = {
@@ -277,7 +277,7 @@ class TestMojeekApiEngine(SearxTestCase):
             }
         }
         results = list(mojeekapi.response(self._resp(payload)))
-        self.assertIn("more from domain", results[0]["metadata"])
+        self.assertIn("more_from_domain: yes", results[0]["metadata"])
         self.assertIn("2kb", results[0]["metadata"])
 
     def test_response_quality_filter_drops_low_cfs(self):

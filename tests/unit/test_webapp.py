@@ -136,7 +136,7 @@ class ViewsTestCase(SearxTestCase):  # pylint: disable=too-many-public-methods
         self.assertEqual('test', result_dict['query'])
         self.assertEqual(len(result_dict['results']), 2)
         self.assertEqual(result_dict['results'][0]['content'], 'first test content')
-        self.assertEqual(result_dict['results'][0]['url'], 'http://first.test.xyz')
+        self.assertEqual(result_dict['results'][0]['url'], 'http://first.test.xyz/')
 
     def test_index_csv(self):
         result = self.client.post('/', data={'q': 'test', 'format': 'csv'})
@@ -146,8 +146,8 @@ class ViewsTestCase(SearxTestCase):  # pylint: disable=too-many-public-methods
         result = self.client.post('/search', data={'q': 'test', 'format': 'csv'})
         self.assertEqual(
             b'title,url,content,host,engine,score,type\r\n'
-            + b'First Test,http://first.test.xyz,first test content,first.test.xyz,startpage,0,result\r\n'
-            + b'Second Test,http://second.test.xyz,second test content,second.test.xyz,youtube,0,result\r\n',
+            + b'First Test,http://first.test.xyz/,first test content,first.test.xyz,startpage,0,result\r\n'
+            + b'Second Test,http://second.test.xyz/,second test content,second.test.xyz,youtube,0,result\r\n',
             result.data,
         )
 
@@ -162,7 +162,7 @@ class ViewsTestCase(SearxTestCase):  # pylint: disable=too-many-public-methods
 
         self.assertIn(b'<title>First Test</title>', result.data)
 
-        self.assertIn(b'<link>http://first.test.xyz</link>', result.data)
+        self.assertIn(b'<link>http://first.test.xyz/</link>', result.data)
 
         self.assertIn(b'<description>first test content</description>', result.data)
 

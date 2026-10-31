@@ -117,10 +117,12 @@ class MatchingTests(unittest.TestCase):
         search.weblibre_goggles = [goggle]
         result = _FakeResult(url)
         # MainResult is a msgspec.Struct (no virtual-subclass registration),
-        # so swap the names the plugin's isinstance gate looks at to point
-        # at _FakeResult for the duration of the call.
+        # so point the plugin's MainResult name at _FakeResult for the
+        # duration of the call.  LegacyResult gets an unrelated class: the
+        # plugin writes LegacyResult via item assignment, MainResult via
+        # attribute, and _FakeResult only supports the latter.
         with patch.object(mod, "MainResult", _FakeResult), patch.object(
-            mod, "LegacyResult", _FakeResult
+            mod, "LegacyResult", type("_NoLegacyResult", (), {})
         ):
             kept = plugin.on_result(Mock(), search, result)
         return kept, result.score_multiplier
