@@ -680,10 +680,12 @@ def search():
     raw_text_query = None
     result_container = None
     try:
+        # Expand the preset into regular form parameters first, so it is
+        # validated like any other request (engine tokens, weights, ...).
+        weblibre_search_presets.apply_preset(sxng_request.form)
         search_query, raw_text_query, _, _, selected_locale = get_search_query_from_webapp(
             sxng_request.preferences, sxng_request.form
         )
-        weblibre_search_presets.apply_preset(sxng_request.form, search_query)
         search_obj = searx.search.SearchWithPlugins(search_query, sxng_request, sxng_request.user_plugins)
         result_container = search_obj.search()
 

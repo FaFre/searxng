@@ -4,26 +4,52 @@
 The WebLibre backend and the SearXNG GUI both consume the same JSON file so
 operators can tune one set of engine/weight/goggle presets and compare them
 directly in the browser.
+
+The file is named ``search_presets.json`` and is read once at startup from the
+SearXNG configuration folder: the folder of ``SEARXNG_SETTINGS_PATH``, by
+default ``/etc/searxng``.  If the file does not exist, presets are disabled and
+the preset selector is hidden.  A file that exists but is invalid aborts the
+startup.
+
+.. code:: json
+
+   {
+     "presets": {
+       "balanced": {
+         "label": "Balanced",
+         "description": "Brave and Mojeek, Brave weighted up",
+         "engines": ["braveapi", "mojeekapi"],
+         "weightOverrides": {"braveapi": 1.5},
+         "goggles": ["tech"]
+       }
+     }
+   }
+
+A request selects a preset with the ``preset`` parameter.
+:py:func:`apply_preset` expands it into the regular ``engines``,
+``weight_overrides`` and ``goggle`` parameters *before* the query is parsed, so
+a preset goes through the same validation as a hand-written request (engine
+tokens, unknown engines, weight limits).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
+import os
+from pathlib import Path
 import re
 import typing as t
 
 from searx import logger
+from searx import settings_loader
 from searx.engines import engines
-from searx.search.models import EngineRef
-
-if t.TYPE_CHECKING:
-    from searx.search.models import SearchQuery
 
 
 log = logger.getChild('weblibre_search_presets')
 
-DEFAULT_PRESET_PATH = '/etc/searxng/search_presets.json'
+PRESET_FILE_NAME = 'search_presets.json'
 _PRESET_ID_RE = re.compile(r'^[A-Za-z0-9_\-]{1,64}$')
 
 
@@ -53,8 +79,29 @@ _PRESETS_BY_ID: dict[str, SearchPreset] = {}
 _PRESET_LIST: tuple[SearchPreset, ...] = ()
 
 
-def initialize(path: str = DEFAULT_PRESET_PATH) -> None:
+def get_default_path() -> Path | None:
+    """Location of :py:obj:`PRESET_FILE_NAME` in the SearXNG configuration
+    folder, or ``None`` if there is no such folder."""
+    folder = settings_loader.get_user_cfg_folder()
+    return folder / PRESET_FILE_NAME if folder else None
+
+
+def initialize(path: str | os.PathLike[str] | None = None) -> None:
+    """Load the presets.
+
+    Without ``path``, the file is looked up with :py:func:`get_default_path`
+    and a missing file disables presets.  An explicit ``path`` must exist.
+    """
     global _PRESETS_BY_ID, _PRESET_LIST  # pylint: disable=global-statement
+    _PRESET_LIST = ()
+    _PRESETS_BY_ID = {}
+
+    if path is None:
+        path = get_default_path()
+        if path is None or not path.is_file():
+            log.info('weblibre_search_presets: no %s found, search presets are disabled', PRESET_FILE_NAME)
+            return
+
     with open(path, 'r', encoding='utf-8') as fp:
         decoded = json.load(fp)
 
@@ -129,7 +176,16 @@ def match_preset(form: dict[str, str]) -> SearchPreset | None:
     return None
 
 
-def apply_preset(form: dict[str, str], search_query: 'SearchQuery') -> SearchPreset | None:
+def apply_preset(form: dict[str, str]) -> SearchPreset | None:
+    """Expand the ``preset`` form parameter into the ``engines``,
+    ``weight_overrides`` and ``goggle`` form parameters.
+
+    Must run *before* :py:func:`searx.webadapter.get_search_query_from_webapp`
+    so the preset goes through the regular validation: engines without a valid
+    token are dropped, unknown engines are ignored and weights are clamped.
+    Explicit ``engines``, ``weight_overrides`` or ``goggle`` parameters take
+    precedence and leave the form untouched.
+    """
     if form.get('engines') or form.get('weight_overrides') or form.get('goggle'):
         return None
 
@@ -137,15 +193,22 @@ def apply_preset(form: dict[str, str], search_query: 'SearchQuery') -> SearchPre
     if preset is None:
         return None
 
-    search_query.engineref_list = [
-        EngineRef(engine_name, engines[engine_name].categories[0])
-        for engine_name in preset.engines
-    ]
-    search_query.weight_overrides = dict(preset.weight_overrides)
+    form['engines'] = preset.engines_param
+    if preset.weight_overrides:
+        form['weight_overrides'] = preset.weight_overrides_param
+    else:
+        form.pop('weight_overrides', None)
     if preset.goggles:
-        form['goggle'] = ','.join(preset.goggles)
+        form['goggle'] = preset.goggle_param
     else:
         form.pop('goggle', None)
+
+    # An explicit engine list combined with categories selects the listed
+    # engines *plus* every engine of those categories (see
+    # ``webadapter.parse_generic``), which would widen the preset.
+    for key in [key for key in form if key == 'categories' or key.startswith('category_')]:
+        del form[key]
+
     return preset
 
 
@@ -189,8 +252,10 @@ def _parse_preset(preset_id: str, preset_json: dict[str, t.Any]) -> SearchPreset
             raise ValueError(
                 f'{base_path}.weightOverrides.{engine_name} must target one of the preset engines'
             )
-        if not isinstance(value, (int, float)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f'{base_path}.weightOverrides.{engine_name} must be numeric')
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f'{base_path}.weightOverrides.{engine_name} must be a finite number >= 0')
         weight_overrides[engine_name] = float(value)
 
     return SearchPreset(
