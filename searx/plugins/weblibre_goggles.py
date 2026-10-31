@@ -65,9 +65,12 @@ MAX_GOGGLES_PER_REQUEST = 8
 # Default softness=5 mirrors Marginalia's `exp(priorityTermAdjustment / 5)`.
 DEFAULT_SCORE_SOFTNESS = 5.0
 # Clamp the per-result multiplier (mirrors `searx.results.calculate_score`'s
-# clamp) so a runaway accumulator can't produce ±inf via exp().
+# clamp) so a runaway accumulator can't produce ±inf via exp().  The clamp is
+# applied to the exponent: exp() itself raises OverflowError above ~709.
 MIN_SCORE_MULTIPLIER = 1e-3
 MAX_SCORE_MULTIPLIER = 1e3
+_MIN_SCORE_EXPONENT = math.log(MIN_SCORE_MULTIPLIER)
+_MAX_SCORE_EXPONENT = math.log(MAX_SCORE_MULTIPLIER)
 
 
 class GoggleParseError(ValueError):
@@ -572,8 +575,8 @@ class SXNGPlugin(Plugin):
             return False
 
         if bonus_sum != 0.0 and isinstance(result, (MainResult, LegacyResult)):
-            multiplier = math.exp(bonus_sum / self.score_softness)
-            multiplier = max(MIN_SCORE_MULTIPLIER, min(multiplier, MAX_SCORE_MULTIPLIER))
+            exponent = max(_MIN_SCORE_EXPONENT, min(bonus_sum / self.score_softness, _MAX_SCORE_EXPONENT))
+            multiplier = math.exp(exponent)
             current = getattr(result, "score_multiplier", 1.0) or 1.0
             new_value = current * multiplier
             if isinstance(result, LegacyResult):

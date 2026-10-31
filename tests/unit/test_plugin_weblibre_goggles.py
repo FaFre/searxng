@@ -106,14 +106,14 @@ class MatchingTests(unittest.TestCase):
         plugin.log = Mock()
         return plugin
 
-    def _run(self, goggle, url):
+    def _run(self, goggle, url, softness=5.0):
         """Invoke plugin.on_result with the goggle attached. Returns
         (kept, score_multiplier) where ``kept`` is the on_result return
         value and ``score_multiplier`` reflects accumulated adjustments."""
         from unittest.mock import patch
         from searx.plugins import weblibre_goggles as mod
 
-        plugin = self._make_plugin({"g": goggle})
+        plugin = self._make_plugin({"g": goggle}, softness=softness)
         search = Mock()
         search.weblibre_goggles = [goggle]
         result = _FakeResult(url)
@@ -127,6 +127,18 @@ class MatchingTests(unittest.TestCase):
         ):
             kept = plugin.on_result(Mock(), search, result)
         return kept, result.score_multiplier
+
+    def test_large_adjustment_is_clamped_instead_of_overflowing(self):
+        from searx.plugins.weblibre_goggles import MAX_SCORE_MULTIPLIER, MIN_SCORE_MULTIPLIER
+
+        g = parse_goggle("x", "$boost=10,site=a.com\n$downrank=10,site=b.com\n")
+        # 10 / 0.01 = 1000: math.exp() raises OverflowError above ~709
+        kept, m = self._run(g, "https://a.com/x", softness=0.01)
+        self.assertTrue(kept)
+        self.assertAlmostEqual(m, MAX_SCORE_MULTIPLIER)
+        kept, m = self._run(g, "https://b.com/x", softness=0.01)
+        self.assertTrue(kept)
+        self.assertAlmostEqual(m, MIN_SCORE_MULTIPLIER)
 
     def test_site_matches_host_and_subdomain(self):
         g = parse_goggle("x", "$boost=2,site=github.com\n")
