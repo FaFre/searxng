@@ -10,7 +10,15 @@
             title="{{ preset.description|e }}">{{ preset.label }}</option>
     {%- endfor -%}
 </select>
+{% endif %}
+{#- The search configuration of the current request, also without presets, so
+    the search form keeps it like pagination does. -#}
 <input type="hidden" id="preset-engines" name="engines" value="{{ current_engines|e }}" {% if not current_engines %}disabled{% endif %}>
+{%- if current_engines -%}
+{%- for category in extra_categories -%}
+<input type="hidden" class="preset-extra-category" name="category_{{ category }}" value="1">
+{%- endfor -%}
+{%- endif %}
 <input type="hidden" id="preset-weight-overrides" name="weight_overrides" value="{{ current_weight_overrides|e }}" {% if not current_weight_overrides %}disabled{% endif %}>
 <input type="hidden" id="preset-goggle" name="goggle" value="{{ current_goggle|e }}" {% if not current_goggle %}disabled{% endif %}>
 <script>
@@ -20,21 +28,27 @@
   const enginesInput = document.getElementById('preset-engines');
   const weightsInput = document.getElementById('preset-weight-overrides');
   const goggleInput = document.getElementById('preset-goggle');
-  if (!(form instanceof HTMLFormElement) || !(presetSelect instanceof HTMLSelectElement)
+  if (!(form instanceof HTMLFormElement)
       || !(enginesInput instanceof HTMLInputElement)
       || !(weightsInput instanceof HTMLInputElement)
       || !(goggleInput instanceof HTMLInputElement)) {
     return;
   }
+  // categories requested next to the engine list of the current request
+  const extraCategoryInputs = Array.from(form.querySelectorAll('input.preset-extra-category'));
 
   const setValue = (input, value) => {
     input.value = value;
     input.disabled = value === '';
   };
 
+  // An engine list plus categories selects the listed engines *and* every
+  // engine of those categories, so the category selection of the form must
+  // not be sent while an engine list is set.
   const syncCategoryInputs = (hasEngines) => {
     for (const input of form.elements) {
-      if (input instanceof HTMLInputElement && input.type === 'hidden' && input.name.startsWith('category_')) {
+      if (input instanceof HTMLInputElement && input.type === 'hidden' && input.name.startsWith('category_')
+          && !extraCategoryInputs.includes(input)) {
         input.disabled = hasEngines;
       }
     }
@@ -44,11 +58,21 @@
     }
   };
 
+  syncCategoryInputs(enginesInput.value !== '');
+
+  if (!(presetSelect instanceof HTMLSelectElement)) {
+    return;
+  }
+
   const syncPreset = () => {
     const option = presetSelect.selectedOptions[0];
     setValue(enginesInput, option?.dataset.engines ?? '');
     setValue(weightsInput, option?.dataset.weightOverrides ?? '');
     setValue(goggleInput, option?.dataset.goggle ?? '');
+    // a preset replaces the whole configuration of the current request
+    for (const input of extraCategoryInputs) {
+      input.disabled = true;
+    }
     syncCategoryInputs(enginesInput.value !== '');
   };
 
@@ -73,4 +97,3 @@
   });
 })();
 </script>
-{% endif %}

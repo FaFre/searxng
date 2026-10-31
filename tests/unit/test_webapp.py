@@ -179,6 +179,36 @@ class ViewsTestCase(SearxTestCase):  # pylint: disable=too-many-public-methods
             self.assertIn(b'name="category_general"', html)
         self.assertIn(b'&amp;categories=general', result.data)
 
+    def _tag(self, html: bytes, marker: bytes) -> bytes:
+        start = html.rindex(b'<', 0, html.index(marker))
+        return html[start : html.index(b'>', start) + 1]
+
+    def test_search_form_keeps_config_without_presets(self):
+        # no search_presets.json in the test settings folder: presets are disabled
+        result = self.client.post(
+            '/search',
+            data={
+                'q': 'test',
+                'engines': 'dummy engine',
+                'category_general': '1',
+                'weight_overrides': 'dummy engine:2',
+                'goggle': 'tech',
+            },
+        )
+        self.assertNotIn(b'id="preset"', result.data)
+        search_form = result.data[result.data.index(b'<form id="search"') :]
+        search_form = search_form[: search_form.index(b'</form>')]
+
+        for marker, value in (
+            (b'id="preset-engines"', b'value="dummy engine"'),
+            (b'id="preset-weight-overrides"', b'value="dummy engine:2"'),
+            (b'id="preset-goggle"', b'value="tech"'),
+        ):
+            tag = self._tag(search_form, marker)
+            self.assertIn(value, tag)
+            self.assertNotIn(b'disabled', tag)
+        self.assertIn(b'class="preset-extra-category" name="category_general"', search_form)
+
     def test_index_json(self):
         result = self.client.post('/', data={'q': 'test', 'format': 'json'})
         self.assertEqual(result.status_code, 308)
