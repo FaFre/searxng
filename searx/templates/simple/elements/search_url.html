@@ -7,8 +7,10 @@
         {%- if pageno > 1 -%}
           &amp;pageno={{ pageno }}
         {%- endif -%}
-        {%- if selected_categories and not current_engines -%}
-          &amp;categories={{ selected_categories|join(",") | replace(' ','+') }}
+        {#- with an engine list, only the categories requested next to it -#}
+        {%- set url_categories = extra_categories if current_engines else selected_categories -%}
+        {%- if url_categories -%}
+          &amp;categories={{ url_categories|join(",") | replace(' ','+') }}
         {%- endif -%}
         {%- if timeout_limit -%}
           &amp;timeout_limit={{ timeout_limit|urlencode }}

@@ -478,6 +478,7 @@ def render(template_name: str, **kwargs):
     kwargs['search_presets'] = weblibre_search_presets.get_presets()
     kwargs['current_search_preset'] = current_preset.id if current_preset else ''
     kwargs['current_engines'] = current_engines
+    kwargs['extra_categories'] = weblibre_search_presets.get_extra_categories(sxng_request.form)
     kwargs['current_weight_overrides'] = current_weight_overrides
     kwargs['current_goggle'] = current_goggle
 

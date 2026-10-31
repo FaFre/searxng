@@ -98,3 +98,13 @@ class TestSearchPresets(SearxTestCase):
         # the token protected engine is dropped, the weight is clamped
         self.assertEqual([ref.name for ref in search_query.engineref_list], [PUBLIC_ENGINE])
         self.assertEqual(search_query.weight_overrides, {PUBLIC_ENGINE: 1000.0})
+
+    def test_extra_categories_only_with_engine_list(self):
+        form = {"q": "test", "engines": PUBLIC_ENGINE, "category_general": "1", "categories": "general,unknown"}
+        self.assertEqual(weblibre_search_presets.get_extra_categories(form), ["general"])
+        self.assertEqual(weblibre_search_presets.get_extra_categories({"q": "test", "category_general": "1"}), [])
+
+    def test_engine_list_with_categories_is_no_preset(self):
+        self._load({"p": _preset([PUBLIC_ENGINE])})
+        self.assertEqual(weblibre_search_presets.match_preset({"engines": PUBLIC_ENGINE}).id, "p")
+        self.assertIsNone(weblibre_search_presets.match_preset({"engines": PUBLIC_ENGINE, "category_general": "1"}))

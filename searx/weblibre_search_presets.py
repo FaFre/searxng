@@ -45,6 +45,7 @@ import typing as t
 from searx import logger
 from searx import settings_loader
 from searx.engines import engines
+from searx.webadapter import parse_category_form
 
 
 log = logger.getChild('weblibre_search_presets')
@@ -155,10 +156,29 @@ def get_effective_form_values(form: dict[str, str]) -> tuple[str, str, str]:
     return preset.engines_param, preset.weight_overrides_param, preset.goggle_param
 
 
+def get_extra_categories(form: dict[str, str]) -> list[str]:
+    """Categories requested together with an explicit ``engines`` parameter.
+
+    The query parser selects the listed engines *plus* every engine of these
+    categories (see ``webadapter.parse_generic``), so forms and URLs that
+    repeat the search must carry them next to the engine list.  Presets never
+    have extra categories: :py:func:`apply_preset` removes them.
+    """
+    if not (form.get('engines') or '').strip():
+        return []
+    extra_categories: list[str] = []
+    for name, value in form.items():
+        parse_category_form(extra_categories, name, value)
+    return list(dict.fromkeys(extra_categories))
+
+
 def match_preset(form: dict[str, str]) -> SearchPreset | None:
     current_engines, current_weight_overrides, current_goggle = get_effective_form_values(form)
 
     if not current_engines and not current_weight_overrides and not current_goggle:
+        return None
+    if get_extra_categories(form):
+        # engines plus categories select more than the preset's engine list
         return None
 
     parsed_engines = _parse_csv(current_engines)

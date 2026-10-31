@@ -168,6 +168,17 @@ class ViewsTestCase(SearxTestCase):  # pylint: disable=too-many-public-methods
         self.assertIn(b'name="category_none"', next_page)
         self.assertNotIn(b'name="engines"', next_page)
 
+    def test_search_html_keeps_categories_next_to_engine_list(self):
+        # engines + categories selects the union of both, forms and URLs must repeat both
+        result = self.client.post('/search', data={'q': 'test', 'engines': 'dummy engine', 'category_general': '1'})
+        next_page = self._next_page_form(result.data)
+        downloads = result.data[result.data.index(b'id="apis"') :]
+
+        for html in (next_page, downloads):
+            self.assertIn(b'name="engines" value="dummy engine"', html)
+            self.assertIn(b'name="category_general"', html)
+        self.assertIn(b'&amp;categories=general', result.data)
+
     def test_index_json(self):
         result = self.client.post('/', data={'q': 'test', 'format': 'json'})
         self.assertEqual(result.status_code, 308)
