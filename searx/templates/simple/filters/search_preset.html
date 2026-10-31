@@ -47,11 +47,13 @@
 
     // An engine list plus categories selects the listed engines *and* every
     // engine of those categories, so the category selection of the form must
-    // not be sent while an engine list is set.
+    // not be sent while an engine list is set: the hidden category inputs, the
+    // checkboxes (search_on_category_select off) and the value the category
+    // buttons write to #selected-categories.
     const syncCategoryInputs = (hasEngines) => {
       for (const input of form.elements) {
-        if (input instanceof HTMLInputElement && input.type === 'hidden' && input.name.startsWith('category_')
-            && !extraCategoryInputs.includes(input)) {
+        if (input instanceof HTMLInputElement && (input.type === 'hidden' || input.type === 'checkbox')
+            && input.name.startsWith('category_') && !extraCategoryInputs.includes(input)) {
           input.disabled = hasEngines;
         }
       }
