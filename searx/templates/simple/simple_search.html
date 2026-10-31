@@ -12,9 +12,13 @@
   <div class="search_filters">
     {% include 'simple/filters/search_preset.html' %}
   </div>
+  {#- With an engine list, categories would add every engine of the category;
+      filters/search_preset.html renders the ones requested next to the list. #}
+  {% if not current_engines %}
   {% for category in selected_categories %}
   <input type="hidden" name="category_{{ category }}" value="1" >
   {% endfor %}
+  {% endif %}
   <input type="hidden" name="language" value="{{ current_language }}" >
   <input type="hidden" name="time_range" value="{{ time_range }}" >
   <input type="hidden" name="safesearch" value="{{ safesearch }}" >

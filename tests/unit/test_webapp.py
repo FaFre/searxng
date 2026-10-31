@@ -209,6 +209,23 @@ class ViewsTestCase(SearxTestCase):  # pylint: disable=too-many-public-methods
             self.assertNotIn(b'disabled', tag)
         self.assertIn(b'class="preset-extra-category" name="category_general"', search_form)
 
+    def test_index_form_with_engine_list_only_keeps_extra_categories(self):
+        def search_form(path: str) -> bytes:
+            html = self.client.get(path).data
+            form = html[html.index(b'<form id="search"') :]
+            return form[: form.index(b'</form>')]
+
+        # the default categories of the preferences would widen the engine list
+        form = search_form('/?engines=dummy%20engine')
+        self.assertIn(b'name="engines" value="dummy engine"', form)
+        self.assertNotIn(b'name="category_', form)
+
+        form = search_form('/?engines=dummy%20engine&category_general=1')
+        self.assertEqual(form.count(b'name="category_general"'), 1)
+
+        form = search_form('/')
+        self.assertIn(b'name="category_general"', form)
+
     def test_index_json(self):
         result = self.client.post('/', data={'q': 'test', 'format': 'json'})
         self.assertEqual(result.status_code, 308)
