@@ -71,6 +71,9 @@ api_key: str = ""
 
 categories = ["general", "web"]
 paging = True
+max_page = 10
+"""Last page SearXNG requests.  Brave's ``offset`` stops at 9 (10 pages);
+:py:func:`init` lowers this value if the API spec reports a smaller limit."""
 safesearch = True
 time_range_support = True
 
@@ -169,6 +172,7 @@ _SEARCH_LANG_REMAP: dict[str, str] = {
 
 def init(_):
     """Initialize the engine."""
+    global max_page  # pylint: disable=global-statement
     if not api_key:
         raise SearxEngineAPIException("No API key provided")
     if search_type not in _VALID_SEARCH_TYPES:
@@ -176,6 +180,9 @@ def init(_):
             f"Invalid search_type {search_type!r}; expected one of {sorted(_VALID_SEARCH_TYPES)}"
         )
     _load_spec()
+    # The processor skips pages above ``max_page``; without this cap, pages
+    # past Brave's limit would be clamped in request() and repeat the last page.
+    max_page = min(max_page, _MAX_PAGE) if max_page else _MAX_PAGE
 
 
 def _load_spec() -> None:

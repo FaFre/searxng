@@ -114,6 +114,18 @@ class TestBraveApiEngine(SearxTestCase):
         with self.assertRaises(SearxEngineAPIException):
             braveapi.init({})
 
+    def test_max_page_matches_api_limit(self):
+        # the processor skips pages above ``max_page`` instead of letting
+        # request() clamp them to the last page
+        self.assertEqual(braveapi.max_page, 10)
+
+    def test_init_lowers_max_page_to_spec_limit(self):
+        self.setattr4test(braveapi, "max_page", 10)
+        self.setattr4test(braveapi, "_MAX_PAGE", 5)
+        with mock.patch.object(braveapi, "_load_spec"):
+            braveapi.init({})
+        self.assertEqual(braveapi.max_page, 5)
+
     # ---- response() ----
 
     def _resp(self, payload, status_code=200):
