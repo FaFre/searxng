@@ -29,6 +29,12 @@ _PERSISTENT_CACHE_DIR = "/var/cache/searxng"
 _DEFAULT_MAX_BODY_SIZE = 1024 * 1024
 _FALLBACK_TTL = 60 * 60
 _STALE_FALLBACK_STATUS = frozenset((429, 500, 502, 503, 504))
+# Request headers that carry API credentials (compared lower-case).  They are
+# part of the cache key so that engines with different keys or accounts never
+# share entries, even when an operator puts them into the same cache scope.
+_CREDENTIAL_HEADERS = frozenset(
+    ("authorization", "x-subscription-token", "api-key", "x-api-key", "ocp-apim-subscription-key")
+)
 
 
 class CachedResponse(msgspec.Struct, frozen=True):
@@ -189,6 +195,11 @@ class OnlineResponseCache:
             payload["accept_language"] = headers["Accept-Language"]
         if headers.get("Content-Type"):
             payload["content_type"] = headers["Content-Type"]
+        credentials = {
+            name.lower(): str(value) for name, value in headers.items() if value and name.lower() in _CREDENTIAL_HEADERS
+        }
+        if credentials:
+            payload["credentials"] = credentials
         cookies = params.get("cookies") or {}
         if cookies:
             payload["cookies"] = cookies

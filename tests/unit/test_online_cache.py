@@ -67,6 +67,24 @@ class TestOnlineResponseCache(SearxTestCase):
         self.assertEqual(cache.make_key(policy, params_a), cache.make_key(policy, params_b))
         self.assertNotEqual(cache.make_key(policy, params_a), cache.make_key(policy, params_c))
 
+    def test_make_key_varies_on_credential_headers(self):
+        cache = OnlineResponseCache()
+        policy = ResponseCachePolicy(enabled=True, scope='braveapi', ttl=600, stale_ttl=600, max_body_size=1024)
+
+        def params(headers):
+            return {'method': 'GET', 'url': 'https://example.com/search?q=test', 'headers': headers}
+
+        key_a = cache.make_key(policy, params({'X-Subscription-Token': 'account-a'}))
+        key_b = cache.make_key(policy, params({'X-Subscription-Token': 'account-b'}))
+        key_a_lower = cache.make_key(policy, params({'x-subscription-token': 'account-a'}))
+        key_api_key = cache.make_key(policy, params({'API-Key': 'account-a'}))
+        key_bearer = cache.make_key(policy, params({'Authorization': 'Bearer account-a'}))
+
+        self.assertNotEqual(key_a, key_b)
+        self.assertEqual(key_a, key_a_lower)
+        self.assertNotEqual(key_a, key_api_key)
+        self.assertNotEqual(cache.make_key(policy, params({})), key_bearer)
+
     def test_sqlite_backend_initializes_schema_before_use(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / 'response-cache.db'
